@@ -48,4 +48,8 @@ const (
 	ReasonInfrastructureReady = "InfrastructureReady"
 	ReasonProvisioningFailed  = "ProvisioningFailed"
 	ReasonNoManagerConfigured = "NoManagerConfigured"
+	ReasonPreparingInfrastructure = "PreparingInfrastructure"
+	ReasonControlPlaneStarting   = "ControlPlaneStarting"
+	ReasonWorkersJoining         = "WorkersJoining"
+	ReasonStageUnknown           = "StageUnknown"
 )
