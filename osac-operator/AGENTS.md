@@ -46,7 +46,7 @@ respective areas.
 | Tier | Location / command | Exercises for real | Faked or omitted |
 |---|---|---|---|
 | Unit | Co-located `*_test.go`; `make test` | Controller helpers, validation, provisioning state logic | External APIs and providers are mocked. |
-| Envtest | Controller tests under `internal/controller/`; currently named `*_integration_test.go` and run by `make test` | Kubernetes API server, etcd, loaded CRDs, and in-process reconciliation | The controller is not deployed to Kind; provisioning uses controllable or noop providers. These files are envtest despite their current names and are covered by OSAC-4837. |
+| Envtest | Controller tests under `internal/controller/*_envtest_test.go`; run by `make test` | Kubernetes API server, etcd, loaded CRDs, and in-process reconciliation | The controller is not deployed to Kind; provisioning uses controllable or noop providers. |
 | Component integration | `test/integration/`; deploy the current operator into a Kind cluster, then run `make integration-tests` | Installed operator, Kubernetes API, CRDs, controller-manager, console proxy, and networking behavior | AAP/provider provisioning and external infrastructure are not real in the current suite; some tests remove finalizers to bypass that boundary. |
 | CI component integration | `make -C osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=operator` | The thin Kind deployment used by the PR workflow | The same external-provider limitations as the local Kind suite. |
 | E2E | `../tests/e2e/` | Cross-component fulfillment journeys | Depends on the deployed test environment and its configured providers. |
