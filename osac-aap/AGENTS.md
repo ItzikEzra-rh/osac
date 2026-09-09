@@ -57,7 +57,7 @@ respective areas.
 | Ansible roles, workflow tasks, hooks, leases, finalizers, or Kubernetes resources | Component integration | `make test` or the focused target command | The test must exercise the role/playbook through Ansible against Kind. |
 | Execution-environment definition or dependency inputs | Execution environment plus applicable integration tests | `make execution-environment-build`, then `make test` | Image success does not prove the workflow boundary. |
 | AAP, OpenStack, KubeVirt/RHACM, or provider provisioning | Contract or real-provider integration | Use the qualifying OSAC-4843 suite | Kind-only tests with mocks cannot claim provider coverage. |
-| Storage-provider behavior | Focused integration plus real-provider coverage when required | Relevant storage target and provider suite | The mock VMS server validates role logic, not the provider API. |
+| Storage-provider behavior | Focused integration plus real-provider coverage when required | `STORAGE_TESTS_ENABLED=true make test` (or the relevant storage target and provider suite) | The mock VMS server validates role logic, not the provider API. |
 
 ### Coverage gaps
 

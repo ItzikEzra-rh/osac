@@ -41,7 +41,7 @@ respective areas.
 |---|---|---|---|
 | Unit | Co-located `*_test.go`; `make test` | Allocation, lifecycle, client, and provider logic in isolation | Kubernetes and external provider APIs are mocked or intercepted. |
 | Envtest | Controller tests under `internal/controller/`; currently named `*_integration_test.go` and run by `make test` | Kubernetes API server, etcd, OSAC CRDs, and static Metal3 CRDs | Metal3 controller, Ironic/BMC, hardware, and some provider clients are faked; current filenames are addressed by OSAC-4837. |
-| Component integration | `test/integration/`; `make integration-tests` against a pre-existing Kind cluster | Deployed operator behavior, CRDs, Kubernetes API, pool/instance flows, and status transitions | The suite creates static `BareMetalHost` state and simulates provider transitions; it does not run a real Metal3 operator, Ironic, BMC, or hardware. |
+| Component integration | `test/integration/`; deploy the current operator into a Kind cluster, then run `make integration-tests` | Deployed operator behavior, CRDs, Kubernetes API, pool/instance flows, and status transitions | The suite creates static `BareMetalHost` state and simulates provider transitions; it does not run a real Metal3 operator, Ironic, BMC, or hardware. |
 | CI component integration | `make -C osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=bmf` | The thin Kind deployment used by the PR workflow | Same static Metal3/provider boundary as the local suite. |
 | E2E | Cross-component OSAC E2E suites | Fulfillment-to-operator user journeys where the environment provides them | Real hardware and provider availability remain environment-dependent. |
 
@@ -51,7 +51,7 @@ respective areas.
 |---|---|---|---|
 | Pure inventory, selection, validation, or client logic | Unit | `make test` | Cover success, no-match, and provider-error paths. |
 | Reconciliation, finalizers, allocation, or status transitions | Envtest | `make test` | Use the public reconciler behavior and the appropriate CRD fixtures. |
-| Controller deployment, CRDs, pool flows, or Kubernetes wiring | Component integration | `make integration-tests` or installer `SUITE=bmf` | Envtest alone does not prove the deployed controller path. |
+| Controller deployment, CRDs, pool flows, or Kubernetes wiring | Component integration | Deploy the current image/manifests, then `make integration-tests`, or use the installer `SUITE=bmf` command | Envtest alone does not prove the deployed controller path. |
 | Metal3, BCM, Ironic, BMC, power, or hardware semantics | Contract or real-provider integration | Follow the owning OSAC-4843 task | Static CRDs and HTTP test doubles do not satisfy a real-boundary requirement. |
 | Generated CRDs or Helm CRDs | Envtest plus Kind | `make manifests generate helm-crds check-helm-crds`, then the required test command | Keep generated artifacts synchronized. |
 

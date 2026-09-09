@@ -47,7 +47,7 @@ respective areas.
 |---|---|---|---|
 | Unit | Co-located `*_test.go`; `make test` | Controller helpers, validation, provisioning state logic | External APIs and providers are mocked. |
 | Envtest | Controller tests under `internal/controller/`; currently named `*_integration_test.go` and run by `make test` | Kubernetes API server, etcd, loaded CRDs, and in-process reconciliation | The controller is not deployed to Kind; provisioning uses controllable or noop providers. These files are envtest despite their current names and are covered by OSAC-4837. |
-| Component integration | `test/integration/`; `make integration-tests` against a pre-existing Kind cluster | Installed operator, Kubernetes API, CRDs, controller-manager, console proxy, and networking behavior | AAP/provider provisioning and external infrastructure are not real in the current suite; some tests remove finalizers to bypass that boundary. |
+| Component integration | `test/integration/`; deploy the current operator into a Kind cluster, then run `make integration-tests` | Installed operator, Kubernetes API, CRDs, controller-manager, console proxy, and networking behavior | AAP/provider provisioning and external infrastructure are not real in the current suite; some tests remove finalizers to bypass that boundary. |
 | CI component integration | `make -C osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=operator` | The thin Kind deployment used by the PR workflow | The same external-provider limitations as the local Kind suite. |
 | E2E | `../tests/e2e/` | Cross-component fulfillment journeys | Depends on the deployed test environment and its configured providers. |
 
@@ -57,7 +57,7 @@ respective areas.
 |---|---|---|---|
 | Pure helpers, validation, or state calculations | Unit | `make test` | Add error and edge-case coverage. |
 | Controller reconciliation, finalizers, status, or CRD interactions | Envtest | `make test` | The envtest suite must exercise the changed lifecycle through the public reconciler behavior. |
-| Controller deployment, watches, RBAC, console proxy, networking, or Helm wiring | Component integration | `make integration-tests` or the installer `SUITE=operator` command | Unit/envtest coverage alone does not prove deployed wiring. |
+| Controller deployment, watches, RBAC, console proxy, networking, or Helm wiring | Component integration | Deploy the current image/manifests, then `make integration-tests`, or use the installer `SUITE=operator` command | Unit/envtest coverage alone does not prove deployed wiring. |
 | AAP, dispatcher, provisioning-provider, KubeVirt, or fulfillment boundary | Contract or E2E | Relevant contract/E2E command | A controllable provider in envtest is not coverage of the real provider boundary. |
 | Generated CRDs or manifests | Envtest plus applicable Kind suite | `make manifests generate helm-crds check-helm-crds`, then the required test command | Do not hand-edit generated output. |
 
