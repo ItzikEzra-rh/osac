@@ -99,6 +99,10 @@ Use these tier names consistently:
   between a component and a provider.
 - **E2E** — a cross-component user journey through the deployed OSAC stack.
 
+Component-specific labels in a matrix are subtiers of one of these canonical
+tiers. The matrix must make that mapping explicit; a local label does not add
+another tier or satisfy a Contract requirement by itself.
+
 A lower tier does not satisfy a higher-tier requirement. Every component
 integration section must disclose which dependencies are real and which are
 faked or stubbed. If the required boundary has no qualifying suite, record
