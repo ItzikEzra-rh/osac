@@ -32,6 +32,34 @@ respective areas.
 - New billing integrations implement `ProviderAdapter` and use the shared runner lifecycle.
 - Keep Kafka credentials and API keys out of logs, fixtures, examples, and manifests.
 
+## Integration Testing
+
+### Test tiers and commands
+
+| Tier | Location / command | Exercises for real | Faked or omitted |
+|---|---|---|---|
+| Unit | Co-located Ginkgo tests in `schema/`, `metering-service/`, and `adapters/`; `make test` | Schema, mapping, runner, retry, ordering, and adapter behavior in-process | Kafka, fulfillment Watch, and most external services are mocked. |
+| Database integration | `metering-service/internal/projection/postgres_test.go`; included by `make test` | A real PostgreSQL testcontainer, schema, persistence, versioning, and queries | Kafka and fulfillment event delivery are not exercised. `SKIP_DB_TESTS` disables this tier. |
+| Component integration | No dedicated real-Kafka component suite currently exists | — | Kafka, CloudEvents delivery, fulfillment Watch, offset commits, retries, and DLQ behavior are currently tested with mocks. |
+| E2E | Cross-component OSAC metering/E2E deployment | The deployed metering pipeline and its configured Kafka/provider dependencies | Depends on the installer environment and enabled metering path. |
+
+### Touched-area requirements
+
+| Touched area | Minimum required tier | Required command | Notes |
+|---|---|---|---|
+| Event schema or transition mapping | Unit across affected modules | `make test` | Schema changes affect `schema/`, `metering-service/`, and `adapters/`. |
+| Projection/database code | Database integration | `make test` | Do not set `SKIP_DB_TESTS` when validating database behavior. |
+| Kafka producer/consumer, CloudEvents transport, offsets, retries, or DLQ | Component integration | Required suite is currently unavailable; track OSAC-4846 | Mock Kafka tests alone do not prove the pipeline boundary. |
+| Fulfillment Watch or gRPC event ingestion | Contract or component integration | Required suite is currently unavailable; track the relevant OSAC-4843 task | Mock streams validate local handling, not the wire contract. |
+| Provider adapters | Unit plus component/E2E coverage for the provider boundary | `make test` and the qualifying provider suite | The shared runner must remain the owner of ordering, retry, deduplication, and DLQ behavior. |
+
+### Coverage gaps
+
+There is no component-level suite that runs the full fulfillment Watch → Kafka
+→ CloudEvents pipeline. Changes to that path must not claim integration
+coverage from mock-based tests; add or extend the real-Kafka coverage under
+OSAC-4846.
+
 ## Generated files
 
 - After changing private fulfillment protos consumed by `metering-service`, run `make generate` from `metering-service/` and commit the resulting `internal/api/` changes; never edit generated client code manually.

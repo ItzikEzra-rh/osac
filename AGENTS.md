@@ -79,3 +79,32 @@ forks writable repositories using authenticated `gh`; use
 - After `tools/bootstrap.sh` creates sibling checkouts, read their local instructions when working there: `osac-ui/AGENTS.md`, `enhancement-proposals/AGENTS.md`, and `osac-docs/AGENTS.md`.
 - These checkouts are separate Git repositories; never include their changes in a mono-repo PR.
 - Never assume remote names. Use `~/.osac-ai-skills/tools/resolve-remotes.sh` or `.osac-ai-skills/tools/resolve-remotes.sh`; if neither exists, run `tools/bootstrap.sh`.
+
+## Integration testing policy
+
+Integration coverage is defined per component and per touched area. The
+nearest component `AGENTS.md` is the source of truth for the required tier,
+test location, command, and dependency boundary.
+
+Use these tier names consistently:
+
+- **Unit** — one package or function with external dependencies mocked.
+- **Envtest** — a real Kubernetes API server and etcd process with the
+  component's controllers or providers driven in-process; this is not a Kind
+  integration test.
+- **Component integration** — the component runs against a real Kind,
+  testcontainer, broker, database, or protocol endpoint as documented by the
+  component.
+- **Contract** — a focused test of a boundary between two components or
+  between a component and a provider.
+- **E2E** — a cross-component user journey through the deployed OSAC stack.
+
+A lower tier does not satisfy a higher-tier requirement. Every component
+integration section must disclose which dependencies are real and which are
+faked or stubbed. If the required boundary has no qualifying suite, record
+the gap and link the owning follow-up task; do not describe a lower-tier or
+stub-only test as coverage of that boundary.
+
+When a suite, command, or dependency boundary changes, update the component's
+integration section in the same change. The section must include a test-tier
+table, a touched-area forcing map, and explicit coverage gaps.
