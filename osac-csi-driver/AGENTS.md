@@ -31,32 +31,17 @@ respective areas.
 
 ## Integration Testing
 
-### Test tiers and commands
+See [suite boundaries and coverage gaps](../docs/INTEGRATION-TESTING.md#osac-csi-driver).
 
-| Tier | Location / command | Exercises for real | Faked or omitted |
-|---|---|---|---|
-| Unit | Co-located Go tests; `make test` | Driver, node/controller mapping, fulfillment client, and validation logic in-process | Fulfillment service and vendor storage endpoints are mocked. |
-| Unit (CSI sanity) | `test/sanity/`; included by `make test` | CSI protocol calls over Unix sockets and the meta-driver's routing behavior | The vendor controller/node implementation is `fakeVendor`; fulfillment volume operations use a stub. |
-| Component integration | No dedicated real-backend suite currently exists | — | No real storage vendor, attach/detach, mount, or fulfillment deployment is exercised by `make test`. |
-| Contract | No dedicated contract suite; track OSAC-4845 for vendor and fulfillment-boundary coverage | No deployed fulfillment or real vendor endpoint is exercised | Fulfillment and vendor calls use stubs and `fakeVendor`. |
-| E2E | `../tests/e2e/` storage flows when enabled | Deployed storage lifecycle through OSAC and its configured backend | Depends on the selected storage tier and environment gates. |
+| Touched area | Required validation | Command / follow-up |
+|---|---|---|
+| Request/response mapping, validation, or driver helpers | Unit | `make test` |
+| CSI controller/node routing or CSI protocol behavior | Unit (CSI sanity) | `make test` |
+| Fulfillment private Volume API contract | Contract or E2E | Regenerate with `buf generate`, then qualifying cross-component suite |
+| Vendor attach, detach, mount, or storage lifecycle | Component integration or E2E | Required suite is currently unavailable; track [OSAC-4845](https://redhat.atlassian.net/browse/OSAC-4845) |
+| Helm/deployment changes | Helm validation plus applicable E2E | `helm lint charts/csi-driver`; `helm lint charts/csi-backends` |
 
-### Touched-area requirements
-
-| Touched area | Minimum required tier | Required command | Notes |
-|---|---|---|---|
-| Request/response mapping, validation, or driver helpers | Unit | `make test` | Cover protocol errors and backend status mapping. |
-| CSI controller/node routing or CSI protocol behavior | CSI sanity | `make test` | The sanity suite is required but remains fake-vendor coverage. |
-| Fulfillment private Volume API contract | Contract or E2E | Regenerate with `buf generate`, then qualifying cross-component suite | A fake generated client does not prove compatibility with the deployed service. |
-| Vendor attach, detach, mount, or storage lifecycle | Component integration or E2E | Required suite is currently unavailable; track OSAC-4845 | The fake vendor cannot satisfy a real storage-backend requirement. |
-| Helm/deployment changes | Helm validation plus applicable E2E | `helm lint charts/csi-driver charts/csi-backends` | Build an image when container/deployment inputs change. |
-
-### Coverage gaps
-
-The current sanity suite intentionally stops at a fake vendor and a fulfillment
-stub. Changes to a real storage backend, attach/detach, mount, or deployed
-fulfillment boundary require the real-backend coverage tracked by OSAC-4845;
-do not label fake-vendor sanity coverage as component integration coverage.
+CSI sanity uses a fake vendor and fulfillment stub; it does not cover a real backend.
 
 ## Generated files
 

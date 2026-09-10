@@ -35,33 +35,17 @@ respective areas.
 
 ## Integration Testing
 
-### Test tiers and commands
+See [suite boundaries and coverage gaps](../docs/INTEGRATION-TESTING.md#bare-metal-fulfillment-operator).
 
-| Tier | Location / command | Exercises for real | Faked or omitted |
-|---|---|---|---|
-| Unit | Co-located `*_test.go`; `make test` | Allocation, lifecycle, client, and provider logic in isolation | Kubernetes and external provider APIs are mocked or intercepted. |
-| Envtest | Controller tests under `internal/controller/*_envtest_test.go`; run by `make test` | Kubernetes API server, etcd, OSAC CRDs, and static Metal3 CRDs | Metal3 controller, Ironic/BMC, hardware, and some provider clients are faked. |
-| Component integration | `test/integration/`; deploy the current operator into a Kind cluster, then run `make integration-tests` | Deployed operator behavior, CRDs, Kubernetes API, pool/instance flows, and status transitions | The suite creates static `BareMetalHost` state and simulates provider transitions; it does not run a real Metal3 operator, Ironic, BMC, or hardware. |
-| Component integration (CI) | `make -C osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=bmf` | The thin Kind deployment used by the PR workflow | Same static Metal3/provider boundary as the local suite. |
-| Contract | No dedicated contract suite; follow OSAC-4843 for qualifying provider-contract coverage | No real external provider boundary is exercised by the current suite | Static Metal3 CRDs, patched status, and simulated provider transitions do not exercise a real Metal3/Ironic/BMC contract. |
-| E2E | Cross-component OSAC E2E suites | Fulfillment-to-operator user journeys where the environment provides them | Real hardware and provider availability remain environment-dependent. |
+| Touched area | Required validation | Command / follow-up |
+|---|---|---|
+| Pure inventory, selection, validation, or client logic | Unit | `make test` |
+| Reconciliation, finalizers, allocation, or status transitions | Envtest | `make test` |
+| Controller deployment, CRDs, pool flows, or Kubernetes wiring | Component integration | Deploy current image/manifests, then `make integration-tests`; [installer alternative](../docs/INTEGRATION-TESTING.md#bare-metal-fulfillment-operator) |
+| Metal3, BCM, Ironic, BMC, power, or hardware semantics | Contract or real-provider integration | Follow the owning [OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843) task |
+| Generated CRDs or Helm CRDs | Envtest plus Kind | `make manifests generate helm-crds check-helm-crds`, then the required test command |
 
-### Touched-area requirements
-
-| Touched area | Minimum required tier | Required command | Notes |
-|---|---|---|---|
-| Pure inventory, selection, validation, or client logic | Unit | `make test` | Cover success, no-match, and provider-error paths. |
-| Reconciliation, finalizers, allocation, or status transitions | Envtest | `make test` | Use the public reconciler behavior and the appropriate CRD fixtures. |
-| Controller deployment, CRDs, pool flows, or Kubernetes wiring | Component integration | Deploy the current image/manifests, then `make integration-tests`, or use the installer `SUITE=bmf` command | Envtest alone does not prove the deployed controller path. |
-| Metal3, BCM, Ironic, BMC, power, or hardware semantics | Contract or real-provider integration | Follow the owning OSAC-4843 task | Static CRDs and HTTP test doubles do not satisfy a real-boundary requirement. |
-| Generated CRDs or Helm CRDs | Envtest plus Kind | `make manifests generate helm-crds check-helm-crds`, then the required test command | Keep generated artifacts synchronized. |
-
-### Coverage gaps
-
-The current Kind suite deliberately stops at static Metal3 resources and
-simulated provider status. Work that changes the real Metal3/Ironic/BCM/BMC
-boundary must add the qualifying coverage under OSAC-4843 or its contract-test
-follow-up; extending the existing static-fixture suite alone is insufficient.
+Kind tests require the current operator deployment and simulate provider transitions.
 
 ## Validation
 

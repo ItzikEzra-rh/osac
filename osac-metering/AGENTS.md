@@ -34,32 +34,17 @@ respective areas.
 
 ## Integration Testing
 
-### Test tiers and commands
+See [suite boundaries and coverage gaps](../docs/INTEGRATION-TESTING.md#osac-metering).
 
-| Tier | Location / command | Exercises for real | Faked or omitted |
-|---|---|---|---|
-| Unit | Co-located Ginkgo tests in `schema/`, `metering-service/`, and `adapters/`; `make test` | Schema, mapping, runner, retry, ordering, and adapter behavior in-process | Kafka, fulfillment Watch, and most external services are mocked. |
-| Component integration (database) | `metering-service/internal/projection/postgres_test.go`; included by `make test` | A real PostgreSQL testcontainer, schema, persistence, versioning, and queries | Kafka and fulfillment event delivery are not exercised. `SKIP_DB_TESTS` disables this tier. |
-| Component integration | No dedicated real-Kafka component suite currently exists | — | Kafka, CloudEvents delivery, fulfillment Watch, offset commits, retries, and DLQ behavior are currently tested with mocks. |
-| Contract | No dedicated contract suite; track OSAC-4843/OSAC-4846 for fulfillment Watch and Kafka boundaries | No deployed Watch or Kafka protocol endpoint is exercised | Mock streams and Kafka mocks are used. |
-| E2E | Cross-component OSAC metering/E2E deployment | The deployed metering pipeline and its configured Kafka/provider dependencies | Depends on the installer environment and enabled metering path. |
+| Touched area | Required validation | Command / follow-up |
+|---|---|---|
+| Event schema or transition mapping | Unit across affected modules | `make test` |
+| Projection/database code | Component integration (database) | `make test` |
+| Kafka producer/consumer, CloudEvents transport, offsets, retries, or DLQ | Component integration | Required suite is currently unavailable; track [OSAC-4846](https://redhat.atlassian.net/browse/OSAC-4846) |
+| Fulfillment Watch or gRPC event ingestion | Contract or component integration | Required suite is currently unavailable; track the relevant [OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843) task |
+| Provider adapters | Unit plus component/E2E coverage for the provider boundary | `make test` and the qualifying provider suite |
 
-### Touched-area requirements
-
-| Touched area | Minimum required tier | Required command | Notes |
-|---|---|---|---|
-| Event schema or transition mapping | Unit across affected modules | `make test` | Schema changes affect `schema/`, `metering-service/`, and `adapters/`. |
-| Projection/database code | Database integration | `make test` | Do not set `SKIP_DB_TESTS` when validating database behavior. |
-| Kafka producer/consumer, CloudEvents transport, offsets, retries, or DLQ | Component integration | Required suite is currently unavailable; track OSAC-4846 | Mock Kafka tests alone do not prove the pipeline boundary. |
-| Fulfillment Watch or gRPC event ingestion | Contract or component integration | Required suite is currently unavailable; track the relevant OSAC-4843 task | Mock streams validate local handling, not the wire contract. |
-| Provider adapters | Unit plus component/E2E coverage for the provider boundary | `make test` and the qualifying provider suite | The shared runner must remain the owner of ordering, retry, deduplication, and DLQ behavior. |
-
-### Coverage gaps
-
-There is no component-level suite that runs the full fulfillment Watch → Kafka
-→ CloudEvents pipeline. Changes to that path must not claim integration
-coverage from mock-based tests; add or extend the real-Kafka coverage under
-OSAC-4846.
+Do not set `SKIP_DB_TESTS` when validating projection/database behavior.
 
 ## Generated files
 

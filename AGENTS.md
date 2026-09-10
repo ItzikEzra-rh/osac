@@ -82,33 +82,7 @@ forks writable repositories using authenticated `gh`; use
 
 ## Integration testing policy
 
-Integration coverage is defined per component and per touched area. The
-nearest component `AGENTS.md` is the source of truth for the required tier,
-test location, command, and dependency boundary.
-
-Use these tier names consistently:
-
-- **Unit** — one package or function with external dependencies mocked.
-- **Envtest** — a real Kubernetes API server and etcd process with the
-  component's controllers or providers driven in-process; this is not a Kind
-  integration test.
-- **Component integration** — the component runs against a real Kind,
-  testcontainer, broker, database, or protocol endpoint as documented by the
-  component.
-- **Contract** — a focused test of a boundary between two components or
-  between a component and a provider.
-- **E2E** — a cross-component user journey through the deployed OSAC stack.
-
-Component-specific labels in a matrix are subtiers of one of these canonical
-tiers. The matrix must make that mapping explicit; a local label does not add
-another tier or satisfy a Contract requirement by itself.
-
-A lower tier does not satisfy a higher-tier requirement. Every component
-integration section must disclose which dependencies are real and which are
-faked or stubbed. If the required boundary has no qualifying suite, record
-the gap and link the owning follow-up task; do not describe a lower-tier or
-stub-only test as coverage of that boundary.
-
-When a suite, command, or dependency boundary changes, update the component's
-integration section in the same change. The section must include a test-tier
-table, a touched-area forcing map, and explicit coverage gaps.
+Use the affected component's touched-area map and the relevant section of
+[Integration testing](docs/INTEGRATION-TESTING.md) for tiers, commands, and
+coverage boundaries. Keep both current when suites change, and link missing
+coverage to its owning follow-up ticket using the Jira URL.
