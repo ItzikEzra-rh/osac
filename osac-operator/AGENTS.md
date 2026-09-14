@@ -48,7 +48,7 @@ See [suite boundaries and coverage gaps](../docs/INTEGRATION-TESTING.md#osac-ope
 | Pure helpers, validation, or state calculations | Unit | `make test` |
 | Controller reconciliation, finalizers, status, or CRD interactions | Envtest | `make test` |
 | Controller deployment, watches, RBAC, console proxy, networking, or Helm wiring | Component integration | Deploy current image/manifests, then `make integration-tests`; [installer alternative](../docs/INTEGRATION-TESTING.md#osac-operator) |
-| AAP, dispatcher, provisioning-provider, KubeVirt, or fulfillment boundary | Contract or E2E | Relevant contract/E2E command |
+| AAP, dispatcher, provisioning-provider, KubeVirt, or fulfillment boundary | Qualifying Contract or E2E | Use a boundary-specific suite; follow [OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843) when coverage is missing |
 | Generated CRDs or manifests | Envtest plus applicable Kind suite | `make manifests generate helm-crds check-helm-crds`, then the required test command |
 
 Envtest runs via `make test`; Kind tests require the current operator deployment.
