@@ -86,3 +86,5 @@ Use the affected component's touched-area map and the relevant section of
 [Integration testing](docs/INTEGRATION-TESTING.md) for tiers, commands, and
 coverage boundaries. Keep both current when suites change, and link missing
 coverage to its owning follow-up ticket using the Jira URL.
+
+During test-plan generation and decomposition, follow the [planning evidence requirements](docs/INTEGRATION-TESTING.md#planning-evidence) and carry the applicable evidence into each implementation or QE task.
