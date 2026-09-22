@@ -40,11 +40,10 @@ from the test tiers and does not replace the applicable integration tests.
 ### Work ownership
 
 Use the test tier to route implementation work. Unit and component-integration
-tests for changed code belong to the owning `[DEV]` story and `/implement`.
-Deployed cross-component user journeys belong to `[QE]` stories and `/e2e`.
-The reviewed test plan must classify each case by tier and owner; do not copy a
-component-integration case into an E2E story or treat an E2E case as covered by
-a lower-tier test.
+tests for changed code belong to the owning `[DEV]` story. Deployed
+cross-component user journeys belong to `[QE]` stories. The reviewed test plan
+must classify each case by tier and owner; do not copy a component-integration
+case into a QE story or treat an E2E case as covered by a lower-tier test.
 
 ## Planning evidence
 
