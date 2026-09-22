@@ -449,24 +449,8 @@ func (t *task) syncStatus(object *bmfov1alpha1.BareMetalInstance) {
 
 	t.syncState(object, powerSynced)
 
-	readyStatus := privatev1.ConditionStatus_CONDITION_STATUS_TRUE
-	state := t.bareMetalInstance.GetStatus().GetState()
-	if state == privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_PROVISIONING ||
-		state == privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_DELETING ||
-		state == privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_FAILED {
-		readyStatus = privatev1.ConditionStatus_CONDITION_STATUS_FALSE
-	}
-	t.updateCondition(privatev1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_READY, readyStatus, "", "")
-
-	// PROVISIONED is a ratchet: only promoted True once the template completes;
-	// never demoted False once set (re-provisioning cycles must not un-provision the instance).
-	// TemplateComplete=True implies Allocated=True by ordering, so no separate allocation check needed.
-	templateCond := object.GetStatusCondition(bmfov1alpha1.HostConditionProvisionTemplateComplete)
-	if templateCond != nil && templateCond.Status == metav1.ConditionTrue {
-		t.updateCondition(
-			privatev1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_PROVISIONED,
-			privatev1.ConditionStatus_CONDITION_STATUS_TRUE, "", "")
-	}
+	progress := bmfov1alpha1.DeriveProvisioningProgress(object.Status.Conditions)
+	t.syncProvisioningStatus(progress)
 
 	protoStatuses := make([]*privatev1.BareMetalNetworkAttachmentStatus, 0, len(object.Status.NetworkAttachmentStatuses))
 	for _, nas := range object.Status.NetworkAttachmentStatuses {
@@ -542,6 +526,79 @@ func (t *task) syncStatus(object *bmfov1alpha1.BareMetalInstance) {
 				}
 			}
 		}
+	}
+}
+
+func (t *task) syncProvisioningStatus(progress bmfov1alpha1.ProvisioningProgress) {
+	provisioned := privatev1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_PROVISIONED
+	ready := privatev1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_READY
+
+	switch progress.State {
+	case bmfov1alpha1.StateFailed:
+		if progress.Failure == bmfov1alpha1.FailureReadyTimeout {
+			t.updateCondition(provisioned, privatev1.ConditionStatus_CONDITION_STATUS_TRUE,
+				"Provisioned", "Infrastructure has been allocated and provisioned.")
+			t.updateCondition(ready, privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
+				string(progress.Failure), provisioningFailureMessage(progress.Failure))
+			return
+		}
+		t.updateCondition(provisioned, privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
+			string(progress.Failure), provisioningFailureMessage(progress.Failure))
+		t.updateCondition(ready, privatev1.ConditionStatus_CONDITION_STATUS_FALSE, "", "")
+	case bmfov1alpha1.StateReady:
+		t.updateCondition(provisioned, privatev1.ConditionStatus_CONDITION_STATUS_TRUE,
+			"Provisioned", "Infrastructure has been allocated and provisioned.")
+		t.updateCondition(ready, privatev1.ConditionStatus_CONDITION_STATUS_TRUE,
+			"Ready", "The instance is ready.")
+	case bmfov1alpha1.StateProvisioned:
+		t.updateCondition(provisioned, privatev1.ConditionStatus_CONDITION_STATUS_TRUE,
+			"Provisioned", "Infrastructure has been allocated and provisioned.")
+		t.updateCondition(ready, privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
+			string(bmfov1alpha1.StageReady), provisioningStageMessage(bmfov1alpha1.StageReady))
+	case bmfov1alpha1.StateInProgress:
+		stage := progress.Step.Stage()
+		if stage == "" {
+			stage = bmfov1alpha1.StageHostAllocation
+		}
+		t.updateCondition(provisioned, privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
+			string(stage), provisioningStageMessage(stage))
+		t.updateCondition(ready, privatev1.ConditionStatus_CONDITION_STATUS_FALSE, "", "")
+	}
+}
+
+func provisioningStageMessage(stage bmfov1alpha1.ProvisioningStage) string {
+	switch stage {
+	case bmfov1alpha1.StageHostAllocation:
+		return "Selecting and allocating a bare metal host."
+	case bmfov1alpha1.StageProvisioning:
+		return "Installing the operating system and applying configuration."
+	case bmfov1alpha1.StageNetworkSetup:
+		return "Setting up network connectivity."
+	case bmfov1alpha1.StageReady:
+		return "The instance is being prepared for readiness."
+	default:
+		return ""
+	}
+}
+
+func provisioningFailureMessage(failure bmfov1alpha1.FailureClassification) string {
+	switch failure {
+	case bmfov1alpha1.FailureNoMatchingHosts:
+		return "No bare metal host matched the requested profile."
+	case bmfov1alpha1.FailureHostAllocation:
+		return "Host allocation failed."
+	case bmfov1alpha1.FailureProvisionJob:
+		return "OS installation and configuration did not complete; the provisioning job failed."
+	case bmfov1alpha1.FailureNetworkAttachment:
+		return "Network attachment did not complete."
+	case bmfov1alpha1.FailureNetworkHandoff:
+		return "Network handoff (reboot) did not complete."
+	case bmfov1alpha1.FailureIPDiscovery:
+		return "IP address discovery did not complete."
+	case bmfov1alpha1.FailureReadyTimeout:
+		return "The instance did not reach its powered-on ready state."
+	default:
+		return ""
 	}
 }
 

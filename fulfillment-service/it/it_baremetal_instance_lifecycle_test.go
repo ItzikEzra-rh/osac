@@ -25,6 +25,8 @@ import (
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	bmfov1alpha1 "github.com/osac-project/osac/bare-metal-fulfillment-operator/api/v1alpha1"
@@ -38,6 +40,40 @@ import (
 // requirement that a BareMetalInstance provide at least one authentication
 // method (ssh_public_key or user_data) at create time.
 const bmiTestSSHPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG8K1ZuSC7tmzxD5LJJXwkCfStVEjzXWYCFhJaLBxWAn test@example.com"
+
+func findBareMetalInstanceCondition(
+	conditions []*publicv1.BareMetalInstanceCondition,
+	conditionType publicv1.BareMetalInstanceConditionType,
+) *publicv1.BareMetalInstanceCondition {
+	for _, condition := range conditions {
+		if condition.GetType() == conditionType {
+			return condition
+		}
+	}
+	return nil
+}
+
+func expectTerminalProvisioningConditions(g Gomega, conditions []*publicv1.BareMetalInstanceCondition) {
+	provisioned := findBareMetalInstanceCondition(conditions,
+		publicv1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_PROVISIONED)
+	g.Expect(provisioned).ToNot(BeNil())
+	if provisioned == nil {
+		return
+	}
+	g.Expect(provisioned.GetStatus()).To(Equal(publicv1.ConditionStatus_CONDITION_STATUS_TRUE))
+	g.Expect(provisioned.GetReason()).To(Equal("Provisioned"))
+	g.Expect(provisioned.GetMessage()).To(Equal("Infrastructure has been allocated and provisioned."))
+
+	ready := findBareMetalInstanceCondition(conditions,
+		publicv1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_READY)
+	g.Expect(ready).ToNot(BeNil())
+	if ready == nil {
+		return
+	}
+	g.Expect(ready.GetStatus()).To(Equal(publicv1.ConditionStatus_CONDITION_STATUS_TRUE))
+	g.Expect(ready.GetReason()).To(Equal("Ready"))
+	g.Expect(ready.GetMessage()).To(Equal("The instance is ready."))
+}
 
 var _ = Describe("BareMetalInstance lifecycle", func() {
 	var (
@@ -914,5 +950,77 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 			Expect(status.Code()).To(Equal(grpccodes.NotFound))
 			Expect(status.Message()).To(ContainSubstring("not found"))
 		})
+	})
+
+	It("Persists terminal provisioning conditions after the source CR is removed", func(ctx context.Context) {
+		createResp, err := bareMetalInstancesClient.Create(ctx, publicv1.BareMetalInstancesCreateRequest_builder{
+			Object: publicv1.BareMetalInstance_builder{
+				Metadata: publicv1.Metadata_builder{
+					Name: fmt.Sprintf("test-bmi-persistence-%s", uuid.New()[24:32]),
+				}.Build(),
+				Spec: publicv1.BareMetalInstanceSpec_builder{
+					CatalogItem:  publicv1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemId}.Build(),
+					InstanceType: publicv1.BareMetalInstanceTypeLocalReference_builder{Id: instanceTypeId}.Build(),
+					SshPublicKey: new(bmiTestSSHPublicKey),
+					DiskImage:    publicv1.DiskImageReference_builder{Id: defaultDiskImageId}.Build(),
+				}.Build(),
+			}.Build(),
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		bareMetalInstanceID := createResp.GetObject().GetId()
+		defer func() {
+			_, _ = privateBareMetalInstancesClient.Delete(context.Background(),
+				privatev1.BareMetalInstancesDeleteRequest_builder{Id: bareMetalInstanceID}.Build())
+		}()
+
+		kubeClient := tool.KubeClient()
+		var sourceCR *bmfov1alpha1.BareMetalInstance
+		Eventually(func(g Gomega) {
+			instances := &bmfov1alpha1.BareMetalInstanceList{}
+			g.Expect(kubeClient.List(ctx, instances, crclient.MatchingLabels{
+				labels.BareMetalInstanceUuid: bareMetalInstanceID,
+			})).To(Succeed())
+			g.Expect(instances.Items).To(HaveLen(1))
+			sourceCR = &instances.Items[0]
+		}, time.Minute, time.Second).Should(Succeed())
+
+		// The operator writes status to the source CR; Signal then makes the
+		// fulfillment controller project that status into the public API.
+		sourceCR.Status.Conditions = []metav1.Condition{
+			{
+				Type:               string(bmfov1alpha1.HostConditionPowerSynced),
+				Status:             metav1.ConditionTrue,
+				Reason:             "TestReady",
+				Message:            "test instance reached its ready power state",
+				LastTransitionTime: metav1.Now(),
+			},
+		}
+		Expect(kubeClient.Status().Update(ctx, sourceCR)).To(Succeed())
+		_, err = privateBareMetalInstancesClient.Signal(ctx,
+			privatev1.BareMetalInstancesSignalRequest_builder{Id: bareMetalInstanceID}.Build())
+		Expect(err).ToNot(HaveOccurred())
+
+		Eventually(func(g Gomega) {
+			response, getErr := bareMetalInstancesClient.Get(ctx,
+				publicv1.BareMetalInstancesGetRequest_builder{Id: bareMetalInstanceID}.Build())
+			g.Expect(getErr).ToNot(HaveOccurred())
+			expectTerminalProvisioningConditions(g, response.GetObject().GetStatus().GetConditions())
+		}, 2*time.Minute, time.Second).Should(Succeed())
+
+		sourceCR.SetFinalizers(nil)
+		Expect(kubeClient.Update(ctx, sourceCR)).To(Succeed())
+		Expect(kubeClient.Delete(ctx, sourceCR)).To(Succeed())
+		Eventually(func(g Gomega) {
+			current := &bmfov1alpha1.BareMetalInstance{}
+			err := kubeClient.Get(ctx, crclient.ObjectKey{Namespace: sourceCR.Namespace, Name: sourceCR.Name}, current)
+			g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		}, time.Minute, time.Second).Should(Succeed())
+
+		Eventually(func(g Gomega) {
+			response, getErr := bareMetalInstancesClient.Get(ctx,
+				publicv1.BareMetalInstancesGetRequest_builder{Id: bareMetalInstanceID}.Build())
+			g.Expect(getErr).ToNot(HaveOccurred())
+			expectTerminalProvisioningConditions(g, response.GetObject().GetStatus().GetConditions())
+		}, time.Minute, time.Second).Should(Succeed())
 	})
 })
