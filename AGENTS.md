@@ -86,3 +86,11 @@ Use the affected component's touched-area map and the relevant section of
 [Integration testing](docs/INTEGRATION-TESTING.md) for tiers, commands, and
 coverage boundaries. Keep both current when suites change, and link missing
 coverage to its owning follow-up ticket using the Jira URL.
+
+Assign unit and component-integration coverage for changed implementation code
+to the owning `[DEV]` work and its `/implement` workflow. Assign deployed
+cross-component user journeys to `[QE]` work and the `/e2e` workflow. The
+test plan must identify the tier and owner for each case so the two workflows
+do not duplicate or omit coverage.
+
+During test-plan generation and decomposition, follow the [planning evidence requirements](docs/INTEGRATION-TESTING.md#planning-evidence) and carry the applicable evidence into each implementation or QE task.

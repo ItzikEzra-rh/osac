@@ -37,6 +37,90 @@ with their Jira URLs.
 Build/package validation checks image assembly and dependencies. It is separate
 from the test tiers and does not replace the applicable integration tests.
 
+### Work ownership
+
+Use the test tier to route implementation work. Unit and component-integration
+tests for changed code belong to the owning `[DEV]` story and `/implement`.
+Deployed cross-component user journeys belong to `[QE]` stories and `/e2e`.
+The reviewed test plan must classify each case by tier and owner; do not copy a
+component-integration case into an E2E story or treat an E2E case as covered by
+a lower-tier test.
+
+## Planning evidence
+
+Design test plans must include a coverage matrix derived from the affected
+components' touched-area maps and the actual test infrastructure. Use one row
+per behavior and required boundary; a cross-component case may need several
+rows. Include unit-only changes with their applicable tier rather than requiring
+integration tests for every change.
+
+Each row must identify:
+
+- The owning component, touched behavior, and requirement/interface references.
+- The required tier and the boundary whose behavior the test proves.
+- The test-case IDs and existing suite/file to extend, or a clearly marked
+  proposed location for new coverage.
+- The execution command, working directory, and environment prerequisites.
+- Which services, APIs, databases, providers, and controllers run for real,
+  and which are simulated, mocked, or omitted.
+- Any unavailable suite or unresolved infrastructure prerequisite, with the
+  owning follow-up's Jira URL. If no owner or ticket exists, report that as
+  unresolved; do not invent a ticket or claim the boundary is covered.
+
+Verify existing suite paths and commands against the repository. Mark proposed
+commands as proposed; where execution is not yet defined, record the gap
+instead of supplying a plausible command. Name a specific tier and harness
+rather than leaving alternatives such as "envtest or Kind" or "Cypress or
+equivalent". Describe the running dependencies: a fixture-based test is not
+evidence of a deployed boundary merely because it is labelled integration.
+
+For timing or asynchronous behavior, identify the trigger, observable result,
+measurement interval, and pass/fail bound. State how the test isolates the path
+being measured from fallback polling, periodic resync, or mocked completion.
+Flag contradictory or unspecified source behavior instead of inventing an
+expected result.
+
+Decomposition must carry the applicable matrix evidence into each
+implementation or QE task's testing approach, including case IDs and
+unresolved gaps. A task must remain actionable when ingested independently of
+the feature test plan. Keep new suite/infrastructure work explicit in the
+decomposition.
+
+Before reporting a plan or decomposition ready, check every touched area against
+its required boundary. Distinguish "has a planned test case" from "has an
+identified execution path" and from "execution passed". Report missing or
+wrong-tier coverage as unresolved even when all requirement and interface IDs
+have mappings. A documented provider gap does not require real hardware for
+an unrelated status-projection change; scope the test to the changed behavior.
+
+### Evidence checks before completing a phase
+
+Apply these checks during generation and self-review, then correct the artifacts
+before reporting the phase complete:
+
+| Claim | Evidence required |
+|---|---|
+| Integration coverage | Identify the exercised boundary and running dependencies. Lint, typechecking, collection, and schema-generation checks are static/build validation, not integration tests. |
+| Envtest coverage | Envtest provides a Kubernetes API server and etcd. It does not provide fulfillment-service, PostgreSQL, or provider controllers; name and start those separately when the test requires them. |
+| Cross-component coverage | A fake endpoint proves the caller's handling of that double, not the receiving service's persistence or reconciliation. Separate those cases and choose the harness for each. |
+| Runnable test | Cite the repository file defining the command and the suite it runs. Replace vague instructions such as "run focused integration tests" with that command, or record execution as blocked pending an explicitly proposed harness. |
+| Source contradiction or missing requirement | Cite the exact source file, section, and passage. Re-read the authoritative PRD/design before declaring a blocker; distinguish stale Jira text from a contradiction in those documents. |
+
+For an existing approved design, retain its explicit assertions (including
+negative, exhaustive, lifecycle, and timing assertions) or record why an
+assertion cannot be planned. Do not replace them with a generic compatibility
+check simply because it shares the same requirement or interface ID.
+
+After decomposition, reconcile the test plan and tasks in both directions. If a
+task restores a missing assertion or corrects a boundary, update the
+corresponding test case and coverage row in the same phase. Do not report a
+complete mapping while leaving the plan and tasks with different expected
+behavior. Preserve earlier versions separately when conducting an evaluation.
+
+Report behavioral coverage, execution readiness, and test execution results
+separately. A case with a proposed harness or unresolved command is planned but
+not execution-ready; static checks passing does not change that status.
+
 ## osac-operator
 
 Touched-area requirements: [component guide](../osac-operator/AGENTS.md#integration-testing).
