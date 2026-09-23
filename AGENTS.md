@@ -87,9 +87,9 @@ Use the affected component's touched-area map and the relevant section of
 coverage boundaries. Keep both current when suites change, and link missing
 coverage to its owning follow-up ticket using the Jira URL.
 
-Assign unit and component-integration coverage for changed implementation code
-to the owning `[DEV]` work. Assign deployed cross-component user journeys to
-`[QE]` work. The test plan must identify the tier and owner for each case so
-the implementation and QE work do not duplicate or omit coverage.
+Assign Unit, Envtest, component-integration, and Contract coverage for changed
+implementation code to the owning `[DEV]` work. Assign deployed cross-component
+user journeys to `[QE]` work. The test plan must identify the tier and owner for
+each case so the implementation and QE work do not duplicate or omit coverage.
 
 During test-plan generation and decomposition, follow the [planning evidence requirements](docs/INTEGRATION-TESTING.md#planning-evidence) and carry the applicable evidence into each implementation or QE task.
