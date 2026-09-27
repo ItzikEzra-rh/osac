@@ -19,6 +19,7 @@ import (
 	"github.com/osac-project/osac-metering/internal/events"
 	"github.com/osac-project/osac-metering/internal/projection"
 	"github.com/osac-project/osac-metering/internal/reconciliation"
+	"github.com/osac-project/osac-metering/internal/testutil"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
 
@@ -124,62 +125,25 @@ func newConfiguredReconciler(
 }
 
 type mockStore struct {
-	mu        sync.Mutex
+	*testutil.MemoryProjectionStore
 	states    map[string]projection.ResourceState
 	upsertErr map[string]error
 }
 
 func newMockStore() *mockStore {
-	return &mockStore{states: map[string]projection.ResourceState{}}
+	states := make(map[string]projection.ResourceState)
+	return &mockStore{
+		MemoryProjectionStore: testutil.NewMemoryProjectionStore(states),
+		states:                states,
+	}
 }
 
-func (s *mockStore) Get(_ context.Context, id string) (*projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.states[id]
-	if !ok {
-		return nil, nil
+func (s *mockStore) Upsert(ctx context.Context, state projection.ResourceState) error {
+	if err, ok := s.upsertErr[state.ResourceID]; ok {
+		return err
 	}
-	return &st, nil
+	return s.MemoryProjectionStore.Upsert(ctx, state)
 }
-func (s *mockStore) Upsert(_ context.Context, st projection.ResourceState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.upsertErr != nil {
-		if err, ok := s.upsertErr[st.ResourceID]; ok {
-			return err
-		}
-	}
-	s.states[st.ResourceID] = st
-	return nil
-}
-func (s *mockStore) Delete(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.states, id)
-	return nil
-}
-func (s *mockStore) ListBillable(_ context.Context) ([]projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []projection.ResourceState
-	for _, st := range s.states {
-		if st.IsBillable {
-			result = append(result, st)
-		}
-	}
-	return result, nil
-}
-func (s *mockStore) ListAll(_ context.Context) ([]projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []projection.ResourceState
-	for _, st := range s.states {
-		result = append(result, st)
-	}
-	return result, nil
-}
-func (s *mockStore) UpdateLastHeartbeat(_ context.Context, _ []string, _ time.Time) error { return nil }
 
 type mockPublisher struct {
 	mu        sync.Mutex
@@ -263,8 +227,8 @@ var _ = Describe("Reconciler", func() {
 			}
 			Expect(correctionFound).To(BeTrue(), "expected missed_creation correction event")
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).To(HaveKey("vm-new"))
 		})
 
@@ -289,8 +253,8 @@ var _ = Describe("Reconciler", func() {
 			Expect(json.Unmarshal(pub.published[0].Data(), &data)).To(Succeed())
 			Expect(data["reason"]).To(Equal("missed_deletion"))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).ToNot(HaveKey("vm-gone"))
 		})
 
@@ -315,8 +279,8 @@ var _ = Describe("Reconciler", func() {
 			pub.mu.Lock()
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty())
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).To(HaveKey("bmi-preserved"))
 		})
 
@@ -369,8 +333,8 @@ var _ = Describe("Reconciler", func() {
 
 			Expect(recon.Reconcile(ctx)).To(Succeed())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			updated := store.states["res-drift"]
 			Expect(updated.IsBillable).To(BeTrue())
 			Expect(updated.BillableSince).NotTo(BeNil())
@@ -398,8 +362,8 @@ var _ = Describe("Reconciler", func() {
 
 			Expect(recon.Reconcile(ctx)).To(Succeed())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			updated := store.states["res-drift-first"]
 			Expect(updated.IsBillable).To(BeTrue())
 			Expect(updated.EverBillable).To(BeTrue(),
@@ -453,8 +417,8 @@ var _ = Describe("Reconciler", func() {
 
 			Expect(recon.Reconcile(ctx)).To(Succeed())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).To(HaveKey("vm-dims"))
 			dims := store.states["vm-dims"].BillingDimensions
 			Expect(dims["instance_type"]).To(Equal("m5.large"))
@@ -531,8 +495,8 @@ var _ = Describe("Reconciler", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("kafka down"))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).ToNot(HaveKey("vm-new"))
 		})
 
@@ -584,8 +548,8 @@ var _ = Describe("Reconciler", func() {
 			}
 			Expect(found).To(BeTrue(), "expected billing_dimensions_drift correction")
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["vm-dims-drift"].BillingDimensions["instance_type"]).To(Equal("m5.xlarge"))
 		})
 
@@ -625,8 +589,8 @@ var _ = Describe("Reconciler", func() {
 
 			Expect(recon.Reconcile(ctx)).To(Succeed())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			updated := store.states["vm-keep-billable"]
 			Expect(updated.BillingDimensions["instance_type"]).To(Equal("m5.xlarge"))
 			Expect(updated.BillableSince).ToNot(BeNil())
@@ -661,8 +625,8 @@ var _ = Describe("Reconciler", func() {
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["vm-version-advance"].FulfillmentVersion).To(Equal(int32(10)))
 		})
 
@@ -725,8 +689,8 @@ var _ = Describe("Reconciler", func() {
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty(), "no correction events for transient state with no projection")
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).ToNot(HaveKey("vm-new-transient"),
 				"must not create projection for transient state")
 		})
@@ -747,8 +711,8 @@ var _ = Describe("Reconciler", func() {
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty(), "no correction events for transient state with no projection")
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).ToNot(HaveKey("vm-new-stopping"),
 				"must not create projection for transient state")
 		})
@@ -779,8 +743,8 @@ var _ = Describe("Reconciler", func() {
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty(), "no correction events for transient state")
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			updated := store.states["vm-transient"]
 			Expect(updated.CurrentState).To(Equal("STOPPED"), "CurrentState must not change to transient STARTING")
 			Expect(updated.PreviousState).To(BeEmpty(), "PreviousState must not be set")
@@ -820,8 +784,8 @@ var _ = Describe("Reconciler", func() {
 					"no StateDrift correction for transient STOPPING")
 			}
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			updated := store.states["vm-stopping"]
 			Expect(updated.CurrentState).To(Equal("RUNNING"), "CurrentState must stay RUNNING")
 			Expect(updated.IsBillable).To(BeTrue(), "billability must not change")
@@ -857,8 +821,8 @@ var _ = Describe("Reconciler", func() {
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty(), "no correction events for same-version transient state")
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			updated := store.states["vm-same-ver"]
 			Expect(updated.CurrentState).To(Equal("STOPPED"), "CurrentState must not change to transient STARTING")
 			Expect(updated.FulfillmentVersion).To(Equal(int32(3)), "FulfillmentVersion must not change")
@@ -995,8 +959,8 @@ var _ = Describe("Reconciler", func() {
 			// 1 control_plane + 1 gpu-h100 worker = 2 correction events
 			Expect(correctionCount).To(Equal(2))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).To(HaveKey("cl-missed"))
 			Expect(store.states["cl-missed"].ResourceType).To(Equal(events.ResourceTypeClusterOrder))
 			Expect(store.states["cl-missed"].IsBillable).To(BeTrue())
@@ -1048,8 +1012,8 @@ var _ = Describe("Reconciler", func() {
 			}
 			Expect(driftCount).To(Equal(2))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["cl-drift"].CurrentState).To(Equal("FAILED"))
 			Expect(store.states["cl-drift"].IsBillable).To(BeFalse())
 		})
@@ -1097,8 +1061,8 @@ var _ = Describe("Reconciler", func() {
 			}
 			Expect(deletionCount).To(Equal(2))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).ToNot(HaveKey("cl-gone"))
 		})
 
@@ -1117,8 +1081,8 @@ var _ = Describe("Reconciler", func() {
 
 			Expect(recon.Reconcile(ctx)).To(Succeed())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).To(HaveLen(600))
 		})
 

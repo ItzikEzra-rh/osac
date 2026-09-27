@@ -14,13 +14,16 @@ GINKGO ?= go run github.com/onsi/ginkgo/v2/ginkgo
 
 include $(shell git rev-parse --show-toplevel)/tools/golangci-lint.mk
 
-.PHONY: build test lint generate image-build image-push clean
+.PHONY: build test test-kafka-integration lint generate image-build image-push clean
 
 build:
 	go build -o bin/$(BINARY_NAME) ./cmd/metering-service
 
 test:
 	$(GINKGO) run -r internal
+
+test-kafka-integration:
+	$(GINKGO) run ./internal/integration
 
 lint: golangci-lint
 	$(GOLANGCI_LINT) run ./...

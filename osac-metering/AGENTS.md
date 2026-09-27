@@ -40,8 +40,8 @@ See [suite boundaries and coverage gaps](../docs/INTEGRATION-TESTING.md#osac-met
 |---|---|---|
 | Event schema or transition mapping | Unit across affected modules | `make test` |
 | Projection/database code | Component integration (database) | `make test` |
-| Kafka producer/consumer, CloudEvents transport, offsets, retries, or DLQ | Component integration | Required suite is currently unavailable; track [OSAC-4846](https://redhat.atlassian.net/browse/OSAC-4846) |
-| Fulfillment Watch or gRPC event ingestion | Contract or component integration | Required suite is currently unavailable; track the relevant [OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843) task |
+| Kafka producer/consumer and CloudEvents pipeline | Component integration with real Kafka and production consumer/publisher; generated gRPC Watch server and projection store are fakes. TLS/SASL, PostgreSQL, deployed fulfillment-service, offsets, retries, and DLQ are outside this case. | `metering-service/internal/integration/`; `make -C osac-metering/metering-service test-kafka-integration` |
+| Fulfillment Watch or gRPC event ingestion | Component integration verifies the generated gRPC client/stream against a fake; deployed fulfillment-service behavior is outside this suite and has no follow-up owner identified here | `make -C osac-metering/metering-service test-kafka-integration` |
 | Provider adapters | Unit plus component/E2E coverage for the provider boundary | `make test` and the qualifying provider suite |
 
 Do not set `SKIP_DB_TESTS` when validating projection/database behavior.

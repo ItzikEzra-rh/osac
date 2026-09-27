@@ -18,6 +18,7 @@ import (
 
 	"github.com/osac-project/osac-metering/internal/events"
 	"github.com/osac-project/osac-metering/internal/projection"
+	"github.com/osac-project/osac-metering/internal/testutil"
 	"github.com/osac-project/osac-metering/internal/watch"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
@@ -111,74 +112,25 @@ func (m *mockPublisher) Publish(_ context.Context, event cloudevents.Event) erro
 }
 
 type mockStore struct {
-	mu         sync.Mutex
+	*testutil.MemoryProjectionStore
 	states     map[string]projection.ResourceState
 	upsertErrs map[string]error
 }
 
 func newMockStore() *mockStore {
+	states := make(map[string]projection.ResourceState)
 	return &mockStore{
-		states:     map[string]projection.ResourceState{},
-		upsertErrs: map[string]error{},
+		MemoryProjectionStore: testutil.NewMonotonicMemoryProjectionStore(states),
+		states:                states,
+		upsertErrs:            map[string]error{},
 	}
 }
 
-func (s *mockStore) Get(_ context.Context, resourceID string) (*projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, ok := s.states[resourceID]
-	if !ok {
-		return nil, nil
-	}
-	return &state, nil
-}
-
-func (s *mockStore) Upsert(_ context.Context, state projection.ResourceState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *mockStore) Upsert(ctx context.Context, state projection.ResourceState) error {
 	if err, ok := s.upsertErrs[state.ResourceID]; ok {
 		return err
 	}
-	if existing, ok := s.states[state.ResourceID]; ok {
-		if existing.FulfillmentVersion > state.FulfillmentVersion {
-			return projection.ErrStaleVersion
-		}
-	}
-	s.states[state.ResourceID] = state
-	return nil
-}
-
-func (s *mockStore) Delete(_ context.Context, resourceID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.states, resourceID)
-	return nil
-}
-
-func (s *mockStore) ListBillable(_ context.Context) ([]projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []projection.ResourceState
-	for _, state := range s.states {
-		if state.IsBillable {
-			result = append(result, state)
-		}
-	}
-	return result, nil
-}
-
-func (s *mockStore) ListAll(_ context.Context) ([]projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []projection.ResourceState
-	for _, state := range s.states {
-		result = append(result, state)
-	}
-	return result, nil
-}
-
-func (s *mockStore) UpdateLastHeartbeat(_ context.Context, _ []string, _ time.Time) error {
-	return nil
+	return s.MemoryProjectionStore.Upsert(ctx, state)
 }
 
 func makeComputeInstance(id, tenant string) *privatev1.ComputeInstance {
@@ -1197,8 +1149,8 @@ var _ = Describe("Consumer", func() {
 			Expect(pub.published).To(HaveLen(1))
 			Expect(pub.published[0].Type()).To(Equal(events.EventDeleted))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).ToNot(HaveKey("vm-del"))
 		})
 
@@ -1253,8 +1205,8 @@ var _ = Describe("Consumer", func() {
 			Expect(pub.published).To(HaveLen(1))
 			Expect(pub.published[0].ID()).To(Equal("evt-newer"))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["vm-stale"].FulfillmentVersion).To(Equal(int32(10)))
 			Expect(store.states["vm-stale"].CurrentState).To(Equal("RUNNING"))
 		})
@@ -1300,8 +1252,8 @@ var _ = Describe("Consumer", func() {
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["vm-conflict"].CurrentState).To(Equal("RUNNING"))
 		})
 
@@ -1355,8 +1307,8 @@ var _ = Describe("Consumer", func() {
 			bd := data["billing_dimensions"].(map[string]any)
 			Expect(bd["instance_type"]).To(Equal("m5.xlarge"))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			updated := store.states["vm-resize"]
 			Expect(updated.BillingDimensions["instance_type"]).To(Equal("m5.xlarge"))
 			Expect(updated.BillableSince).ToNot(BeNil())
@@ -1418,8 +1370,8 @@ var _ = Describe("Consumer", func() {
 			Expect(bd["instance_type"]).To(Equal("m5.xlarge"))
 			Expect(data["duration_seconds"]).ToNot(BeNil())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			updated := store.states["vm-dim-change"]
 			Expect(updated.BillingDimensions["instance_type"]).To(Equal("m5.xlarge"))
 		})
@@ -1492,8 +1444,8 @@ var _ = Describe("Consumer", func() {
 			Expect(data["duration_seconds"]).To(BeNumerically("~", 3600.0, 0.1))
 
 			// Projection should show STOPPED, non-billable
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["vm-stop-seq"].CurrentState).To(Equal("STOPPED"))
 			Expect(store.states["vm-stop-seq"].IsBillable).To(BeFalse())
 		})
@@ -1513,8 +1465,8 @@ var _ = Describe("Consumer", func() {
 			err := consumer.Run(ctx)
 			Expect(err).ToNot(HaveOccurred())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).To(HaveKey("vm-new"))
 			Expect(store.states["vm-new"].CurrentState).To(Equal("RUNNING"))
 			Expect(store.states["vm-new"].IsBillable).To(BeTrue())
@@ -1943,8 +1895,8 @@ var _ = Describe("Consumer", func() {
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty())
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["cl-ready"].CurrentState).To(Equal("READY"))
 			Expect(store.states["cl-ready"].IsBillable).To(BeTrue())
 			Expect(store.states["cl-ready"].BillableSince).To(Equal(&now))
@@ -1990,8 +1942,8 @@ var _ = Describe("Consumer", func() {
 				Expect(e.Type()).To(Equal(events.EventSuspended))
 			}
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["cl-fail"].IsBillable).To(BeFalse())
 			Expect(store.states["cl-fail"].BillableSince).To(BeNil())
 		})
@@ -2297,8 +2249,8 @@ var _ = Describe("Consumer", func() {
 			defer pub.mu.Unlock()
 			Expect(pub.published).To(BeEmpty(), "same state+dims should not publish")
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["vm-version"].FulfillmentVersion).To(Equal(int32(10)),
 				"version should be advanced even when event is skipped")
 		})
@@ -2343,11 +2295,11 @@ var _ = Describe("Consumer", func() {
 			pub.mu.Lock()
 			Expect(pub.published).To(BeEmpty())
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			Expect(store.states["vm-monotonic"].CurrentState).To(Equal("RUNNING"))
 			Expect(store.states["vm-monotonic"].FulfillmentVersion).To(Equal(int32(5)))
 			Expect(store.states["vm-monotonic"].TransitionTime).To(Equal(storedAt))
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("rejects a higher-version BMaaS metadata update with an older transition time", func() {
@@ -2389,10 +2341,10 @@ var _ = Describe("Consumer", func() {
 			pub.mu.Lock()
 			Expect(pub.published).To(BeEmpty())
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			Expect(store.states["bmi-monotonic-metadata"].FulfillmentVersion).To(Equal(int32(5)))
 			Expect(store.states["bmi-monotonic-metadata"].TransitionTime).To(Equal(storedAt))
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("rejects a higher-version BMaaS STOPPED transition with an older timestamp", func() {
@@ -2439,11 +2391,11 @@ var _ = Describe("Consumer", func() {
 			pub.mu.Lock()
 			Expect(pub.published).To(BeEmpty(), "a stale STOPPED transition must not suspend consumption")
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			Expect(store.states["bmi-monotonic-stopped"].CurrentState).To(Equal("BARE_METAL_INSTANCE_STATE_RUNNING"))
 			Expect(store.states["bmi-monotonic-stopped"].FulfillmentVersion).To(Equal(int32(5)))
 			Expect(store.states["bmi-monotonic-stopped"].TransitionTime).To(Equal(storedAt))
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("accepts a newer BMaaS STOPPED transition", func() {
@@ -2494,12 +2446,12 @@ var _ = Describe("Consumer", func() {
 			pub.mu.Lock()
 			Expect(pub.published[0].Type()).To(Equal(events.EventSuspended))
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			Expect(store.states["bmi-monotonic-newer"].CurrentState).To(Equal("BARE_METAL_INSTANCE_STATE_STOPPED"))
 			Expect(store.states["bmi-monotonic-newer"].FulfillmentVersion).To(Equal(int32(6)))
 			Expect(store.states["bmi-monotonic-newer"].TransitionTime).To(Equal(stoppedAt))
 			Expect(store.states["bmi-monotonic-newer"].BMaaSMeterState.Consumption.ActiveSince).To(BeNil())
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("rejects a higher-version BMaaS deletion with an older timestamp", func() {
@@ -2544,10 +2496,10 @@ var _ = Describe("Consumer", func() {
 			pub.mu.Lock()
 			Expect(pub.published).To(BeEmpty())
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			_, exists := store.states["bmi-monotonic-delete"]
 			Expect(exists).To(BeTrue(), "a stale deletion must not delete the projection")
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("publishes exactly 1 event for cluster DELETED (not N+1)", func() {
@@ -2589,8 +2541,8 @@ var _ = Describe("Consumer", func() {
 			Expect(pub.published).To(HaveLen(1))
 			Expect(pub.published[0].Type()).To(Equal(events.EventDeleted))
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states).ToNot(HaveKey("cl-del"))
 		})
 
@@ -2635,8 +2587,8 @@ var _ = Describe("Consumer", func() {
 			}))
 			pub.mu.Unlock()
 
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			state, ok := store.states["bmi-1"]
 			Expect(ok).To(BeTrue())
 			Expect(state.CurrentState).To(Equal("BARE_METAL_INSTANCE_STATE_RUNNING"))
@@ -2690,9 +2642,9 @@ var _ = Describe("Consumer", func() {
 			Expect(pub.published).To(HaveLen(1))
 			Expect(pub.published[0].ID()).To(Equal("evt-vm-after-delete"))
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			Expect(store.states).To(HaveKey("bmi-delete-missing-timestamp"))
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("skips BMaaS data quality errors without disrupting later Watch events", func() {
@@ -2723,10 +2675,10 @@ var _ = Describe("Consumer", func() {
 			Expect(pub.published).To(HaveLen(1))
 			Expect(pub.published[0].ID()).To(Equal("evt-vm-after-bmi"))
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			Expect(store.states).NotTo(HaveKey("bmi-invalid"))
 			Expect(store.states).To(HaveKey("evt-vm-after-bmi"))
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("emits started events for first allocation after FAILED", func() {
@@ -2819,12 +2771,12 @@ var _ = Describe("Consumer", func() {
 			pub.mu.Lock()
 			Expect(pub.published).To(BeEmpty())
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			updated := store.states["bmi-running-dimension-update"]
 			Expect(updated.ComponentBillableSince).To(BeNil())
 			Expect(updated.BillingDimensions["bm_instance_type"]).To(Equal("bmi-type-gpu-large"))
 			Expect(updated.FulfillmentVersion).To(Equal(int32(1)))
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("skips invalid BMaaS transitions and processes later events on the same stream", func() {
@@ -2881,8 +2833,8 @@ var _ = Describe("Consumer", func() {
 			Expect(pub.published).To(HaveLen(1))
 			Expect(pub.published[0].ID()).To(Equal("evt-bmi-valid-after-invalid/consumption"))
 			Expect(pub.published[0].Type()).To(Equal(events.EventSuspended))
-			store.mu.Lock()
-			defer store.mu.Unlock()
+			store.Lock()
+			defer store.Unlock()
 			Expect(store.states["bmi-invalid-transition"].CurrentState).To(Equal("BARE_METAL_INSTANCE_STATE_STOPPING"))
 		})
 
@@ -2928,12 +2880,12 @@ var _ = Describe("Consumer", func() {
 			pub.mu.Lock()
 			Expect(pub.published).To(BeEmpty())
 			pub.mu.Unlock()
-			store.mu.Lock()
+			store.Lock()
 			updated := store.states["bmi-failed-deleting"]
 			Expect(updated.CurrentState).To(Equal("BARE_METAL_INSTANCE_STATE_DELETING"))
 			Expect(updated.IsBillable).To(BeFalse())
 			Expect(updated.BillableSince).To(BeNil())
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("emits independent allocation and consumption events when BMaaS enters RUNNING", func() {
@@ -3050,12 +3002,12 @@ var _ = Describe("Consumer", func() {
 			Expect(data["duration_seconds"]).To(BeNumerically("==", 3600))
 			pub.mu.Unlock()
 
-			store.mu.Lock()
+			store.Lock()
 			updated := store.states["bmi-stopping"]
 			Expect(updated.IsBillable).To(BeTrue())
 			Expect(updated.BillableSince).To(Equal(&t0))
 			Expect(updated.ComponentBillableSince).To(BeNil())
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("covers BMaaS meter boundaries at the Watch handler", func() {
@@ -3179,12 +3131,12 @@ var _ = Describe("Consumer", func() {
 					Expect(pub.published[i].Type()).To(Equal(test.wantTypes[i]))
 				}
 				pub.mu.Unlock()
-				store.mu.Lock()
+				store.Lock()
 				updated := store.states[resourceID]
 				Expect(updated.IsBillable).To(BeTrue())
 				Expect(updated.BillableSince).NotTo(BeNil())
 				Expect(updated.ComponentBillableSince).To(BeNil())
-				store.mu.Unlock()
+				store.Unlock()
 			}
 		})
 
@@ -3248,9 +3200,9 @@ var _ = Describe("Consumer", func() {
 			Expect(pub.published[2].Time()).To(Equal(deletionCompletedAt))
 			pub.mu.Unlock()
 
-			store.mu.Lock()
+			store.Lock()
 			Expect(store.states).NotTo(HaveKey("bmi-delete"))
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("resumes both BMaaS meters after recovery from FAILED", func() {
@@ -3305,12 +3257,12 @@ var _ = Describe("Consumer", func() {
 			Expect(pub.published[1].Type()).To(Equal(events.EventResumed))
 			pub.mu.Unlock()
 
-			store.mu.Lock()
+			store.Lock()
 			updated := store.states["bmi-recovered"]
 			Expect(updated.CurrentState).To(Equal("BARE_METAL_INSTANCE_STATE_RUNNING"))
 			Expect(updated.BillableSince).NotTo(BeNil())
 			Expect(updated.ComponentBillableSince).To(BeNil())
-			store.mu.Unlock()
+			store.Unlock()
 		})
 
 		It("does not republish a duplicate BMaaS transition", func() {
