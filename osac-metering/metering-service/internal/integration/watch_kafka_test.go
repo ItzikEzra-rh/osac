@@ -28,6 +28,7 @@ import (
 
 	"github.com/osac-project/osac-metering/internal/events"
 	kafkapub "github.com/osac-project/osac-metering/internal/kafka"
+	"github.com/osac-project/osac-metering/internal/testutil"
 	"github.com/osac-project/osac-metering/internal/watch"
 	"github.com/osac-project/osac-metering/schema"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
@@ -135,7 +136,7 @@ var _ = Describe("fulfillment Watch to Kafka", func() {
 
 		mapperFactory, err := watch.NewMapperFactory(unusedExternalIPPoolGetter{}, "integration-deployment", map[string]string{})
 		Expect(err).NotTo(HaveOccurred())
-		store := newMemoryProjectionStore()
+		store := testutil.NewMonotonicMemoryProjectionStore(nil)
 		meteringConsumer, err := watch.NewConsumer(
 			privatev1.NewEventsClient(grpcConn),
 			publisher,

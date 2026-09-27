@@ -12,13 +12,10 @@ package integration_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
-	"time"
 
 	"google.golang.org/grpc"
 
-	"github.com/osac-project/osac-metering/internal/projection"
 	"github.com/osac-project/osac-metering/internal/watch"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
@@ -47,70 +44,6 @@ func (s *watchServerFake) Watch(
 	}
 	<-stream.Context().Done()
 	return stream.Context().Err()
-}
-
-type memoryProjectionStore struct {
-	mu     sync.RWMutex
-	states map[string]projection.ResourceState
-}
-
-var _ projection.Store = (*memoryProjectionStore)(nil)
-
-func newMemoryProjectionStore() *memoryProjectionStore {
-	return &memoryProjectionStore{states: make(map[string]projection.ResourceState)}
-}
-
-func (s *memoryProjectionStore) Get(_ context.Context, resourceID string) (*projection.ResourceState, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	state, ok := s.states[resourceID]
-	if !ok {
-		return nil, nil
-	}
-	return &state, nil
-}
-
-func (s *memoryProjectionStore) Upsert(_ context.Context, state projection.ResourceState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if existing, ok := s.states[state.ResourceID]; ok && existing.FulfillmentVersion > state.FulfillmentVersion {
-		return projection.ErrStaleVersion
-	}
-	s.states[state.ResourceID] = state
-	return nil
-}
-
-func (s *memoryProjectionStore) Delete(_ context.Context, resourceID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.states, resourceID)
-	return nil
-}
-
-func (s *memoryProjectionStore) ListBillable(_ context.Context) ([]projection.ResourceState, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var result []projection.ResourceState
-	for _, state := range s.states {
-		if state.IsBillable {
-			result = append(result, state)
-		}
-	}
-	return result, nil
-}
-
-func (s *memoryProjectionStore) ListAll(_ context.Context) ([]projection.ResourceState, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make([]projection.ResourceState, 0, len(s.states))
-	for _, state := range s.states {
-		result = append(result, state)
-	}
-	return result, nil
-}
-
-func (*memoryProjectionStore) UpdateLastHeartbeat(_ context.Context, _ []string, _ time.Time) error {
-	return nil
 }
 
 type unusedExternalIPPoolGetter struct{}

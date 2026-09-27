@@ -18,6 +18,7 @@ import (
 
 	"github.com/osac-project/osac-metering/internal/events"
 	"github.com/osac-project/osac-metering/internal/projection"
+	"github.com/osac-project/osac-metering/internal/testutil"
 	"github.com/osac-project/osac-metering/internal/watch"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
@@ -111,74 +112,28 @@ func (m *mockPublisher) Publish(_ context.Context, event cloudevents.Event) erro
 }
 
 type mockStore struct {
+	*testutil.MemoryProjectionStore
 	mu         sync.Mutex
 	states     map[string]projection.ResourceState
 	upsertErrs map[string]error
 }
 
 func newMockStore() *mockStore {
+	states := make(map[string]projection.ResourceState)
 	return &mockStore{
-		states:     map[string]projection.ResourceState{},
-		upsertErrs: map[string]error{},
+		MemoryProjectionStore: testutil.NewMonotonicMemoryProjectionStore(states),
+		states:                states,
+		upsertErrs:            map[string]error{},
 	}
 }
 
-func (s *mockStore) Get(_ context.Context, resourceID string) (*projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, ok := s.states[resourceID]
-	if !ok {
-		return nil, nil
-	}
-	return &state, nil
-}
-
-func (s *mockStore) Upsert(_ context.Context, state projection.ResourceState) error {
+func (s *mockStore) Upsert(ctx context.Context, state projection.ResourceState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err, ok := s.upsertErrs[state.ResourceID]; ok {
 		return err
 	}
-	if existing, ok := s.states[state.ResourceID]; ok {
-		if existing.FulfillmentVersion > state.FulfillmentVersion {
-			return projection.ErrStaleVersion
-		}
-	}
-	s.states[state.ResourceID] = state
-	return nil
-}
-
-func (s *mockStore) Delete(_ context.Context, resourceID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.states, resourceID)
-	return nil
-}
-
-func (s *mockStore) ListBillable(_ context.Context) ([]projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []projection.ResourceState
-	for _, state := range s.states {
-		if state.IsBillable {
-			result = append(result, state)
-		}
-	}
-	return result, nil
-}
-
-func (s *mockStore) ListAll(_ context.Context) ([]projection.ResourceState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []projection.ResourceState
-	for _, state := range s.states {
-		result = append(result, state)
-	}
-	return result, nil
-}
-
-func (s *mockStore) UpdateLastHeartbeat(_ context.Context, _ []string, _ time.Time) error {
-	return nil
+	return s.MemoryProjectionStore.Upsert(ctx, state)
 }
 
 func makeComputeInstance(id, tenant string) *privatev1.ComputeInstance {
