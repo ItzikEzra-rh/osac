@@ -181,7 +181,7 @@ var _ = Describe("fulfillment Watch to Kafka", func() {
 		var cloudEvent cloudevents.Event
 		Expect(json.Unmarshal(message.Value, &cloudEvent)).To(Succeed())
 		Expect(cloudEvent.ID()).To(Equal(eventID))
-		Expect(cloudEvent.Type()).To(Equal(events.EventStarted))
+		Expect(cloudEvent.Type()).To(Equal(events.EventCreated))
 		Expect(cloudEvent.SpecVersion()).To(Equal("1.0"))
 		Expect(cloudEvent.Source()).To(Equal("osac-metering"))
 		Expect(cloudEvent.Time().Equal(transitionTime)).To(BeTrue())
