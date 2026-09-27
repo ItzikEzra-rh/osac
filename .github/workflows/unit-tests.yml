@@ -149,7 +149,7 @@ jobs:
         ginkgo run --timeout 1h -r internal
 
   run-osac-metering-tests:
-    name: Run unit tests (osac-metering)
+    name: Run unit and component integration tests (osac-metering)
     needs: changes
     if: needs.changes.outputs.should-run == 'true' && needs.changes.outputs.osac-metering-relevant == 'true'
     concurrency:

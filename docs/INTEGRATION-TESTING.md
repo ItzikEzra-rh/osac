@@ -272,21 +272,18 @@ Touched-area requirements: [component guide](../osac-metering/AGENTS.md#integrat
 |---|---|---|---|
 | Unit | Co-located Ginkgo tests in `schema/`, `metering-service/`, and `adapters/`; `make test` | Schema, mapping, runner, retry, ordering, and adapter behavior in-process | Kafka, fulfillment Watch, and most external services are mocked. |
 | Component integration (database) | `metering-service/internal/projection/postgres_test.go`; included by `make test` | A real PostgreSQL testcontainer, schema, persistence, versioning, and queries | Kafka and fulfillment event delivery are not exercised. `SKIP_DB_TESTS` disables this tier. |
-| Component integration | No dedicated real-Kafka component suite currently exists | — | Kafka, CloudEvents delivery, fulfillment Watch, offset commits, retries, and DLQ behavior are currently tested with mocks. |
-| Contract | No dedicated contract suite; track [OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843)/[OSAC-4846](https://redhat.atlassian.net/browse/OSAC-4846) for fulfillment Watch and Kafka boundaries | No deployed Watch or Kafka protocol endpoint is exercised | Mock streams and Kafka mocks are used. |
+| Component integration (Watch to Kafka) | `metering-service/internal/integration/watch_kafka_test.go`; `make -C osac-metering/metering-service test-kafka-integration`; included by `make -C osac-metering/metering-service test` | Real Kafka testcontainer, production Watch consumer and Kafka publisher, generated gRPC client/server transport, and CloudEvents serialization/delivery | The Watch server is a generated-gRPC fake and `projection.Store` is in memory; PostgreSQL, deployed fulfillment-service, production TLS/SASL setup, offsets, retries, and DLQ are not exercised. |
+| Contract | No deployed fulfillment-service contract suite or owning follow-up is identified here; create/assign one before claiming that boundary if it is required | The component suite verifies a generated Watch client against a generated-gRPC fake over loopback and publishes to a real Kafka broker | The fake does not validate deployed fulfillment-service behavior, authorization, or service-side filtering. |
 | E2E | Cross-component OSAC metering/E2E deployment | The deployed metering pipeline and its configured Kafka/provider dependencies | Depends on the installer environment and enabled metering path. |
 
 ### Coverage notes
 
 - **Event schema or transition mapping:** Schema changes affect `schema/`, `metering-service/`, and `adapters/`.
 - **Projection/database code:** Do not set `SKIP_DB_TESTS` when validating database behavior.
-- **Kafka producer/consumer, CloudEvents transport, offsets, retries, or DLQ:** Mock Kafka tests alone do not prove the pipeline boundary.
-- **Fulfillment Watch or gRPC event ingestion:** Mock streams validate local handling, not the wire contract.
+- **Kafka producer/consumer and CloudEvents transport:** The component suite verifies one lifecycle publish/read through a real Kafka broker; it does not cover offset commits, retries, or DLQ behavior.
+- **Fulfillment Watch or gRPC event ingestion:** The component suite verifies the generated client/stream path against a fake over real loopback gRPC; it does not exercise a deployed fulfillment-service.
 - **Provider adapters:** The shared runner must remain the owner of ordering, retry, deduplication, and DLQ behavior.
 
 ### Coverage gaps
 
-There is no component-level suite that runs the full fulfillment Watch → Kafka
-→ CloudEvents pipeline. Changes to that path must not claim integration
-coverage from mock-based tests; add or extend the real-Kafka coverage under
-[OSAC-4846](https://redhat.atlassian.net/browse/OSAC-4846).
+The component-level Watch → Kafka → CloudEvents suite now runs through a real Kafka broker and the production metering consumer/publisher, with fulfillment Watch and projection storage represented by fakes. It does not cover deployed fulfillment-service behavior, PostgreSQL persistence, production TLS/SASL setup, offsets, retries, or DLQ; keep those boundaries explicit when a change depends on them.
