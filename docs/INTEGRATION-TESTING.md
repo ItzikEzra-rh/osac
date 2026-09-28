@@ -125,8 +125,9 @@ not execution-ready; static checks passing does not change that status.
 
 Every change must classify its touched behaviors against the tier boundaries
 above and, when the affected component has one, its touched-area map. Changes
-with no code (documentation, tooling, generated config) need no integration
-coverage; record that classification explicitly.
+that do not alter runtime behavior need no integration coverage; record that
+classification explicitly. Classify behavior-changing generated config against
+the touched-area map.
 
 Before opening a pull request:
 
