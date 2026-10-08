@@ -79,6 +79,15 @@ are independent of suite selection.
 |---|---|---|---|
 | CaaS CI suite policy | [DEV] Unit/Contract selection checks | `OSAC_TEST_INFRA_DIR=/path/to/osac-test-infra uv run pytest -n 0 tests/unit/test_caas_ci_suite_policy.py` | Evaluates caller YAML and executes reusable path-selection Bash locally. No deployed services; companion checks skip if the checkout is not specified. |
 
+## Component-hooks and sandbox regression smoke tests
+
+Follow the [touched-area map and local commands](../.agentic-ci/AGENTS.md).
+The workflow stays present on every PR and merge-group run, including unrelated
+changes that skip execution.
+Its path filter uses one brace-alternation entry because `predicate-quantifier:
+every` combines separate entries with AND. Keep overlay/helper, test, and Python
+setup paths in that entry. See the [sandbox coverage boundary](../docs/INTEGRATION-TESTING.md#agentic-ci-sandbox).
+
 ## Release safety
 
 Nightly builds use provisional `sha-*` image tags while all build, unit,
