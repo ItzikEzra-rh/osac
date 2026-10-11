@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import yaml
 
@@ -50,6 +51,22 @@ if tool == "go" and sys.argv[1] == "list":
 """
 
 
+def _fixture_environment(repo: Path, binary_dir: Path, record_log: Path, e2e_venv: Path) -> dict[str, str]:
+    inherited = os.environ.copy()
+    inherited.pop("GIT_DIR", None)
+    inherited.pop("GIT_WORK_TREE", None)
+    return {
+        **inherited,
+        "PATH": f"{binary_dir}:{inherited['PATH']}",
+        "FIXTURE_REPO": str(repo),
+        "RECORD_LOG": str(record_log),
+        "OSAC_E2E_VENV": str(e2e_venv),
+        "GO_LIST_PACKAGES": json.dumps(["unit", "envtest", "container"]),
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+
 class SandboxValidationTests(unittest.TestCase):
     """No OSAC service, toolchain download, cluster, or container is started."""
 
@@ -62,16 +79,7 @@ class SandboxValidationTests(unittest.TestCase):
         self.bin.mkdir()
         self.log = Path(self.tmp.name) / "commands.jsonl"
         self.venv = Path(self.tmp.name) / "e2e-venv"
-        self.env = {
-            **os.environ,
-            "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "FIXTURE_REPO": str(self.repo),
-            "RECORD_LOG": str(self.log),
-            "OSAC_E2E_VENV": str(self.venv),
-            "GO_LIST_PACKAGES": json.dumps(["unit", "envtest", "container"]),
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_NOSYSTEM": "1",
-        }
+        self.env = _fixture_environment(self.repo, self.bin, self.log, self.venv)
         self.env.pop("FAIL_COMMAND", None)
         for tool in ("go", "make", "golangci-lint", "pnpm", "uv", "helm", "ruff"):
             script = self.bin / tool
@@ -115,7 +123,7 @@ class SandboxValidationTests(unittest.TestCase):
         target.write_text(body)
 
     def git(self, *args: str) -> str:
-        return subprocess.check_output(["git", *args], cwd=self.repo, env=self.env, text=True).strip()
+        return subprocess.check_output(["git", *args], cwd=self.repo, env=self.env, text=True, timeout=30).strip()
 
     def commit(self) -> None:
         self.git("add", ".")
@@ -160,6 +168,25 @@ if changed "$@"; then echo yes; else echo no; fi
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "yes" if expected else "no")
+
+    def test_fixture_git_commands_ignore_inherited_repository_location(self) -> None:
+        other_repo = self.repo.parent / "other-repo"
+        self.git("init", "-q", str(other_repo))
+        with patch.dict(os.environ, {"GIT_DIR": str(other_repo / ".git"), "GIT_WORK_TREE": str(other_repo)}):
+            env = _fixture_environment(self.repo, self.bin, self.log, self.venv)
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=self.repo,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=True,
+        )
+        self.assertEqual(Path(result.stdout.strip()), self.repo)
+        self.assertNotIn("GIT_DIR", env)
+        self.assertNotIn("GIT_WORK_TREE", env)
 
     def test_api_inputs_select_direct_checks_and_consumers(self) -> None:
         for path in ("internal/unit/fixture_test.go", "go.mod", "go.sum", "testdata/nested/new fixture.json"):
