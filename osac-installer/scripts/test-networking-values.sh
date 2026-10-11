@@ -29,6 +29,46 @@ render_success() {
   fi
 }
 
+render_ipv4_only_manager_success() {
+  local name=$1
+  shift
+
+  local output="${TMP_DIR}/${name}.yaml"
+  echo "checking ${name} (expected IPv4-only manager declarations)"
+  "${HELM_BIN}" "${COMMON_ARGS[@]}" "$@" >"${output}"
+  if ! grep -Fq -- 'capabilities: "ipv4"' "${output}"; then
+    echo "ERROR: ${name} rendered, but did not contain the IPv4 manager capability" >&2
+    exit 1
+  fi
+  if grep -Ein -- 'capabilities: "[^"]*(ipv6|dual[_-]?stack)' "${output}"; then
+    echo "ERROR: ${name} rendered an IPv6 or dual-stack manager capability" >&2
+    exit 1
+  else
+    search_status=$?
+    if [[ ${search_status} -ne 1 ]]; then
+      echo "ERROR: failed to check ${name} for IPv6 or dual-stack manager capabilities" >&2
+      exit 1
+    fi
+  fi
+}
+
+render_ipv4_only_network_class_success() {
+  local name=$1
+  shift
+
+  local output="${TMP_DIR}/${name}.yaml"
+  echo "checking ${name} (expected IPv4-only NetworkClass defaults)"
+  "${HELM_BIN}" "${COMMON_ARGS[@]}" "$@" >"${output}"
+  if ! grep -Fq -- '\"ipv4_cidr\":\"0.0.0.0/0\"' "${output}"; then
+    echo "ERROR: ${name} rendered, but did not contain the IPv4 egress default" >&2
+    exit 1
+  fi
+  if grep -Fq -- '\"ipv6_cidr\"' "${output}"; then
+    echo "ERROR: ${name} rendered an IPv6 egress field" >&2
+    exit 1
+  fi
+}
+
 render_failure() {
   local name=$1
   shift
@@ -73,11 +113,34 @@ render_success \
   --set global.networking.k8sManager=k8s_only
 
 # Default operator values advertise ipv4-only capabilities on manager ConfigMaps.
-render_success \
+render_ipv4_only_manager_success \
   agentless-manager-capabilities \
-  'capabilities: "ipv4"' \
   --set global.networking.fabricManager= \
   --set global.networking.k8sManager=k8s_only
+
+# AgentlessNet is a distinct fabric-manager profile for the fail-fast
+# unified-resource operations; its NetworkClass and AAP backend must agree.
+render_success \
+  agentless-net-stub \
+  'fabric_manager\":\"agentless_net' \
+  --set global.networking.fabricManager=agentless_net \
+  --set global.networking.k8sManager=
+
+render_success \
+  agentless-net-stub-manager-configmap \
+  'name: osac-network-fabric-manager-agentless-net' \
+  --set global.networking.fabricManager=agentless_net \
+  --set global.networking.k8sManager=
+
+# The disposable CaaS test profile normally preserves ci.steps through the AAP
+# expert override. The overlay clears it so the facade installs AgentlessNet.
+render_success \
+  agentless-net-stub-caas-overlay \
+  'fabric_manager\":\"agentless_net' \
+  --values "${SCRIPT_DIR}/../values/caas-ci/instance.yaml" \
+  --values "${SCRIPT_DIR}/../values/agentless-net-stub.yaml" \
+  --set-string service.externalHostname=fulfillment-api.test.example.com \
+  --set-string service.internalHostname=fulfillment-internal-api.test.example.com
 
 # Netris requires the fabric-specific connection details and derives its
 # manager and NetworkClass. These are test-only placeholders, never credentials.
@@ -142,6 +205,35 @@ render_success \
   --set global.networking.k8sManager=k8s_only \
   --set-string global.networking.networkClass.title=Custom\ network
 
+render_ipv4_only_network_class_success \
+  network-class-ipv4-egress \
+  --set global.networking.fabricManager= \
+  --set global.networking.k8sManager=k8s_only
+
+# IPv6 egress declarations are no longer part of either installer values path.
+render_failure \
+  ipv6-egress-global \
+  --set global.networking.fabricManager= \
+  --set global.networking.k8sManager=k8s_only \
+  --set global.networking.networkClass.defaults.egressRules[0].protocol=PROTOCOL_ALL \
+  --set-string global.networking.networkClass.defaults.egressRules[0].ipv6Cidr=2001:db8::/32
+
+render_failure \
+  ipv6-egress-expert \
+  --set global.expertOverrides.networkClass=true \
+  --set networkClass.enabled=true \
+  --set-string networkClass.title=Custom\ network \
+  --set networkClass.k8sManager=k8s_only \
+  --set networkClass.defaults.egressRules[0].protocol=PROTOCOL_ALL \
+  --set-string networkClass.defaults.egressRules[0].ipv6Cidr=2001:db8::/32
+
+# Manager capability declarations are IPv4-only at the installer schema boundary.
+render_failure \
+  ipv6-manager-capability \
+  --set networkManagers.enabled=true \
+  --set networkManagers.k8sManagers.k8s_only.enabled=true \
+  --set networkManagers.k8sManagers.k8s_only.capabilities[0]=ipv6
+
 # Port ranges are meaningful only for TCP and UDP rules.
 render_failure \
   icmp-with-ports \
@@ -166,9 +258,63 @@ render_failure \
   --set global.networking.fabricManager=netris \
   --set global.networking.k8sManager=
 
-# CUDN has no facade implementation yet and must fail at render time.
+# CaaS on virtual BareMetalHosts uses the CUDN overlay manager with ci.steps
+# (operator-bound Agent waits), not a physical Netris fabric.
+render_success \
+  caas-cudn-profile \
+  'fabric_manager\":\"cudn_net' \
+  --values "${SCRIPT_DIR}/../values/caas-ci/instance.yaml" \
+  --set-string global.clusterDomain=apps.example.test \
+  --set-string service.externalHostname=api.example.test \
+  --set-string service.internalHostname=api-internal.example.test
+# Parse only whitelisted, non-secret documents/fields. Never print the render:
+# it may include credential-bearing Secrets from other chart components.
+python3 - "${TMP_DIR}/caas-cudn-profile.yaml" <<'PY'
+import json
+import sys
+import yaml
+
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1], encoding='utf-8')) if isinstance(d, dict)]
+def resource(kind, name):
+    matches = [d for d in docs if d.get('kind') == kind and d.get('metadata', {}).get('name') == name]
+    assert len(matches) == 1, f'expected one {kind}/{name}, got {len(matches)}'
+    return matches[0]
+
+job = resource('Job', 'create-network-class')
+env = {e['name']: e['value'] for c in job['spec']['template']['spec']['containers']
+       if c['name'] == 'create-network-class' for e in c['env']}
+body = json.loads(env['NETWORK_CLASS_BODY'])
+assert body.get('fabric_manager') == 'cudn_net', 'default class must select CUDN'
+assert not body.get('k8s_manager'), 'default class must have no k8s manager'
+manager = resource('ConfigMap', 'osac-network-fabric-manager-cudn-net')
+assert manager['data']['name'] == 'cudn_net'
+cluster = resource('ConfigMap', 'cluster-fulfillment-ig')['data']
+assert cluster['NETWORK_CLASS'] == 'ci'
+assert cluster['NETWORK_STEPS_COLLECTION'] == 'ci.steps'
+resource('ConfigMap', 'network-fulfillment-ig')
+PY
+
+# A CUDN profile without CaaS, with wrong AAP pairing, a conflicting class,
+# or without registered manager must fail before any deployable render.
+for name in cudn-without-caas cudn-wrong-steps cudn-wrong-class cudn-disabled-manager cudn-k8s-conflict cudn-operatorless-openshift cudn-operatorless-kind; do
+  case "${name}" in
+    cudn-without-caas) overrides=(--set global.services.caas.enabled=false) ;;
+    cudn-wrong-steps) overrides=(--set-string aap.instanceGroups.clusterFulfillment.config.NETWORK_STEPS_COLLECTION=agentless_net.steps) ;;
+    cudn-wrong-class) overrides=(--set global.networking.networkClass.fabricManager=netris) ;;
+    cudn-disabled-manager) overrides=(--set operator.networkManagers.fabricManagers.cudn_net.enabled=false) ;;
+    cudn-k8s-conflict) overrides=(--set global.networking.k8sManager=k8s_only) ;;
+    cudn-operatorless-openshift) overrides=(--set operator.enabled=false --set aap.aap.instance.enabled=false --set aap.bootstrap.enabled=false) ;;
+    cudn-operatorless-kind) overrides=(--set service.variant=kind --set hubAccess.enabled=true --set operator.enabled=false --set aap.aap.instance.enabled=false --set aap.bootstrap.enabled=false) ;;
+  esac
+  render_failure "${name}" \
+    --values "${SCRIPT_DIR}/../values/caas-ci/instance.yaml" \
+    --set-string global.clusterDomain=apps.example.test \
+    --set-string service.externalHostname=api.example.test \
+    --set-string service.internalHostname=api-internal.example.test \
+    "${overrides[@]}"
+done
 render_failure \
-  cudn-not-implemented \
+  cudn-unscoped \
   --set global.networking.fabricManager=cudn_net \
   --set global.networking.k8sManager=
 
@@ -250,5 +396,12 @@ render_operator_success \
   --set networkManagers.enabled=true \
   --set global.networking.fabricManager= \
   --set global.networking.k8sManager=k8s_only
+
+render_operator_success \
+  facade-auto-enable-agentless-net \
+  'name: osac-network-fabric-manager-agentless-net' \
+  --set networkManagers.enabled=true \
+  --set global.networking.fabricManager=agentless_net \
+  --set global.networking.k8sManager=
 
 echo "networking values validation passed"
