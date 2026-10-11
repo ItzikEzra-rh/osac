@@ -28,6 +28,7 @@ MODULES = (
     "osac-ui/proxy",
 )
 METERING = {f"osac-metering/{name}" for name in ("schema", "adapters", "metering-service")}
+GIT_REPOSITORY_OVERRIDES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY")
 DOUBLE = r"""
 import json
 import os
@@ -53,8 +54,8 @@ if tool == "go" and sys.argv[1] == "list":
 
 def _fixture_environment(repo: Path, binary_dir: Path, record_log: Path, e2e_venv: Path) -> dict[str, str]:
     inherited = os.environ.copy()
-    inherited.pop("GIT_DIR", None)
-    inherited.pop("GIT_WORK_TREE", None)
+    for name in GIT_REPOSITORY_OVERRIDES:
+        inherited.pop(name, None)
     return {
         **inherited,
         "PATH": f"{binary_dir}:{inherited['PATH']}",
@@ -169,24 +170,31 @@ if changed "$@"; then echo yes; else echo no; fi
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "yes" if expected else "no")
 
-    def test_fixture_git_commands_ignore_inherited_repository_location(self) -> None:
+    def test_fixture_git_commands_ignore_inherited_repository_overrides(self) -> None:
         other_repo = self.repo.parent / "other-repo"
         self.git("init", "-q", str(other_repo))
-        with patch.dict(os.environ, {"GIT_DIR": str(other_repo / ".git"), "GIT_WORK_TREE": str(other_repo)}):
+        other_index = self.repo.parent / "other.index"
+        overrides = {
+            "GIT_DIR": str(other_repo / ".git"),
+            "GIT_WORK_TREE": str(other_repo),
+            "GIT_INDEX_FILE": str(other_index),
+            "GIT_OBJECT_DIRECTORY": str(other_repo / ".git" / "objects"),
+        }
+        with patch.dict(os.environ, overrides):
             env = _fixture_environment(self.repo, self.bin, self.log, self.venv)
 
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=self.repo,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=30,
-            check=True,
-        )
-        self.assertEqual(Path(result.stdout.strip()), self.repo)
-        self.assertNotIn("GIT_DIR", env)
-        self.assertNotIn("GIT_WORK_TREE", env)
+        def git_path(*args: str) -> Path:
+            result = subprocess.check_output(
+                ["git", "rev-parse", *args], cwd=self.repo, env=env, text=True, timeout=30
+            ).strip()
+            path = Path(result)
+            return path if path.is_absolute() else (self.repo / path).resolve()
+
+        self.assertEqual(git_path("--show-toplevel"), self.repo.resolve())
+        self.assertEqual(git_path("--git-path", "index"), (self.repo / ".git" / "index").resolve())
+        self.assertEqual(git_path("--git-path", "objects"), (self.repo / ".git" / "objects").resolve())
+        for name in GIT_REPOSITORY_OVERRIDES:
+            self.assertNotIn(name, env)
 
     def test_api_inputs_select_direct_checks_and_consumers(self) -> None:
         for path in ("internal/unit/fixture_test.go", "go.mod", "go.sum", "testdata/nested/new fixture.json"):
