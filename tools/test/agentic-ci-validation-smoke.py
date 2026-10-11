@@ -28,7 +28,7 @@ MODULES = (
     "osac-ui/proxy",
 )
 METERING = {f"osac-metering/{name}" for name in ("schema", "adapters", "metering-service")}
-GIT_REPOSITORY_OVERRIDES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY")
+GIT_REPOSITORY_OVERRIDES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")
 DOUBLE = r"""
 import json
 import os
@@ -179,6 +179,7 @@ if changed "$@"; then echo yes; else echo no; fi
             "GIT_WORK_TREE": str(other_repo),
             "GIT_INDEX_FILE": str(other_index),
             "GIT_OBJECT_DIRECTORY": str(other_repo / ".git" / "objects"),
+            "GIT_COMMON_DIR": str(other_repo / ".git"),
         }
         with patch.dict(os.environ, overrides):
             env = _fixture_environment(self.repo, self.bin, self.log, self.venv)
@@ -191,6 +192,7 @@ if changed "$@"; then echo yes; else echo no; fi
             return path if path.is_absolute() else (self.repo / path).resolve()
 
         self.assertEqual(git_path("--show-toplevel"), self.repo.resolve())
+        self.assertEqual(git_path("--git-common-dir"), (self.repo / ".git").resolve())
         self.assertEqual(git_path("--git-path", "index"), (self.repo / ".git" / "index").resolve())
         self.assertEqual(git_path("--git-path", "objects"), (self.repo / ".git" / "objects").resolve())
         for name in GIT_REPOSITORY_OVERRIDES:
