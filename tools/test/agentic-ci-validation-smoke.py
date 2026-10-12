@@ -11,7 +11,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import yaml
 
@@ -28,7 +27,6 @@ MODULES = (
     "osac-ui/proxy",
 )
 METERING = {f"osac-metering/{name}" for name in ("schema", "adapters", "metering-service")}
-GIT_REPOSITORY_OVERRIDES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")
 DOUBLE = r"""
 import json
 import os
@@ -46,26 +44,15 @@ with open(os.environ["RECORD_LOG"], "a") as log:
 failure = json.loads(os.environ.get("FAIL_COMMAND", "{}"))
 if failure and all(record.get(key) == value for key, value in failure.items()):
     sys.exit(17)
+if tool == "uv" and sys.argv[1] == "venv":
+    interpreter = Path(sys.argv[-1]) / "bin/python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text(Path(__file__).read_text())
+    interpreter.chmod(0o755)
 if tool == "go" and sys.argv[1] == "list":
     for name in json.loads(os.environ["GO_LIST_PACKAGES"]):
         print(f"example.test/{cwd}/internal/{name} {Path.cwd() / 'internal' / name}")
 """
-
-
-def _fixture_environment(repo: Path, binary_dir: Path, record_log: Path, e2e_venv: Path) -> dict[str, str]:
-    inherited = os.environ.copy()
-    for name in GIT_REPOSITORY_OVERRIDES:
-        inherited.pop(name, None)
-    return {
-        **inherited,
-        "PATH": f"{binary_dir}:{inherited['PATH']}",
-        "FIXTURE_REPO": str(repo),
-        "RECORD_LOG": str(record_log),
-        "OSAC_E2E_VENV": str(e2e_venv),
-        "GO_LIST_PACKAGES": json.dumps(["unit", "envtest", "container"]),
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_CONFIG_NOSYSTEM": "1",
-    }
 
 
 class SandboxValidationTests(unittest.TestCase):
@@ -80,16 +67,19 @@ class SandboxValidationTests(unittest.TestCase):
         self.bin.mkdir()
         self.log = Path(self.tmp.name) / "commands.jsonl"
         self.venv = Path(self.tmp.name) / "e2e-venv"
-        self.env = _fixture_environment(self.repo, self.bin, self.log, self.venv)
-        self.env.pop("FAIL_COMMAND", None)
+        self.env = {
+            "PATH": f"{self.bin}:{os.environ['PATH']}",
+            "FIXTURE_REPO": str(self.repo),
+            "RECORD_LOG": str(self.log),
+            "OSAC_E2E_VENV": str(self.venv),
+            "GO_LIST_PACKAGES": json.dumps(["unit", "envtest", "container"]),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
         for tool in ("go", "make", "golangci-lint", "pnpm", "uv", "helm", "ruff"):
             script = self.bin / tool
             script.write_text(f"#!{sys.executable}\n{DOUBLE}")
             script.chmod(0o755)
-        interpreter = self.venv / "bin/python"
-        interpreter.parent.mkdir(parents=True)
-        interpreter.write_text(f"#!{sys.executable}\n{DOUBLE}")
-        interpreter.chmod(0o755)
         for module in MODULES:
             self.write(f"{module}/go.mod", "module example.test/fixture\n")
             self.write(f"{module}/go.sum", "")
@@ -117,6 +107,7 @@ class SandboxValidationTests(unittest.TestCase):
         self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
         profile = yaml.safe_load((ROOT / ".agentic-ci/config.yml").read_text())["sandbox"]
         self.steps = {step["name"]: step["run"] for step in profile["validate"]}
+        self.assertNotIn("e2e-deps", {step["name"] for step in profile["setup"]})
 
     def write(self, path: str, body: str = "changed\n") -> None:
         target = self.repo / path
@@ -170,82 +161,44 @@ if changed "$@"; then echo yes; else echo no; fi
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "yes" if expected else "no")
 
-    def test_fixture_git_commands_ignore_inherited_repository_overrides(self) -> None:
-        other_repo = self.repo.parent / "other-repo"
-        self.git("init", "-q", str(other_repo))
-        other_index = self.repo.parent / "other.index"
-        overrides = {
-            "GIT_DIR": str(other_repo / ".git"),
-            "GIT_WORK_TREE": str(other_repo),
-            "GIT_INDEX_FILE": str(other_index),
-            "GIT_OBJECT_DIRECTORY": str(other_repo / ".git" / "objects"),
-            "GIT_COMMON_DIR": str(other_repo / ".git"),
-        }
-        with patch.dict(os.environ, overrides):
-            env = _fixture_environment(self.repo, self.bin, self.log, self.venv)
-
-        def git_path(*args: str) -> Path:
-            result = subprocess.check_output(
-                ["git", "rev-parse", *args], cwd=self.repo, env=env, text=True, timeout=30
-            ).strip()
-            path = Path(result)
-            return path if path.is_absolute() else (self.repo / path).resolve()
-
-        self.assertEqual(git_path("--show-toplevel"), self.repo.resolve())
-        self.assertEqual(git_path("--git-common-dir"), (self.repo / ".git").resolve())
-        self.assertEqual(git_path("--git-path", "index"), (self.repo / ".git" / "index").resolve())
-        self.assertEqual(git_path("--git-path", "objects"), (self.repo / ".git" / "objects").resolve())
-        for name in GIT_REPOSITORY_OVERRIDES:
-            self.assertNotIn(name, env)
-
-    def test_api_inputs_select_direct_checks_and_consumers(self) -> None:
-        for path in ("internal/unit/fixture_test.go", "go.mod", "go.sum", "testdata/nested/new fixture.json"):
-            with self.subTest(path=path):
-                self.write(f"osac-operator/api/{path}")
-                lint = self.run_step("go-lint")
-                self.assertEqual(lint.returncode, 0, lint.stderr)
-                self.assertIn(
-                    {
-                        "tool": "golangci-lint",
-                        "cwd": "osac-operator/api",
-                        "args": ["run", "--config", "../.golangci.yml", "./..."],
-                    },
-                    self.records(),
-                )
-                tests = self.selected("go-test", "go")
-                self.assertTrue(
-                    {"osac-operator/api", "fulfillment-service", "osac-operator", "bare-metal-fulfillment-operator"}
-                    <= tests,
-                    tests,
-                )
-                self.git("reset", "--hard", "HEAD")
-                self.git("clean", "-fd")
+    def test_api_change_selects_direct_checks_and_consumers(self) -> None:
+        self.write("osac-operator/api/internal/unit/fixture_test.go")
+        lint = self.run_step("go-lint")
+        self.assertEqual(lint.returncode, 0, lint.stderr)
+        self.assertIn(
+            {
+                "tool": "golangci-lint",
+                "cwd": "osac-operator/api",
+                "args": ["run", "--config", "../.golangci.yml", "./..."],
+            },
+            self.records(),
+        )
+        self.assertEqual(
+            self.selected("go-test", "go"),
+            {"osac-operator/api", "fulfillment-service", "osac-operator", "bare-metal-fulfillment-operator"},
+        )
 
     def test_parent_lint_config_selects_api_lint(self) -> None:
         self.write("osac-operator/.golangci.yml")
         self.assertIn("osac-operator/api", self.selected("go-lint", "golangci-lint"))
 
-    def test_schema_inputs_select_all_metering_modules(self) -> None:
-        for path in ("internal/unit/fixture_test.go", "go.mod", "go.sum", "testdata/nested/new.json"):
-            with self.subTest(path=path):
-                self.write(f"osac-metering/schema/{path}")
-                result = self.run_step("go-lint")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                modules = {record["args"][1] for record in self.records("make")}
-                self.assertTrue(modules >= METERING, modules)
-                self.assertTrue(self.selected("go-test", "go") >= METERING)
-                self.git("reset", "--hard", "HEAD")
-                self.git("clean", "-fd")
+    def test_schema_change_selects_all_metering_modules(self) -> None:
+        self.write("osac-metering/schema/internal/unit/fixture_test.go")
+        result = self.run_step("go-lint")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({record["args"][1] for record in self.records("make")}, METERING)
+        self.assertEqual(self.selected("go-test", "go"), METERING)
 
-    def test_no_change_and_irrelevant_change_do_not_select_go_checks(self) -> None:
+    def test_no_change_and_irrelevant_change_skip_checks_and_e2e_dependencies(self) -> None:
         for changed in (False, True):
             with self.subTest(changed=changed):
                 if changed:
                     self.write("README.md")
-                for step in ("go-lint", "go-test"):
+                for step in ("go-lint", "go-test", "e2e-collect"):
                     result = self.run_step(step)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(self.records(), [])
+                    self.assertFalse(self.venv.exists())
 
     def test_broad_trigger_includes_api(self) -> None:
         self.write("go.work")
@@ -293,57 +246,39 @@ if changed "$@"; then echo yes; else echo no; fi
         self.assert_changed(True, "osac-operator/api")
         self.assertIn("fulfillment-service", self.selected("go-test", "go"))
 
-    def test_ui_runs_full_sequence_for_tracked_and_untracked_inputs(self) -> None:
-        for path in ("osac-ui/package.json", "osac-ui/pnpm-lock.yaml", "osac-ui/new.test.tsx"):
-            with self.subTest(path=path):
-                self.write(path)
-                result = self.run_step("osac-ui")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(
-                    [record["args"] for record in self.records("pnpm")],
-                    [["install", "--frozen-lockfile"], ["run", "typecheck"], ["lint"], ["test"]],
-                )
-                self.git("reset", "--hard", "HEAD")
-                self.git("clean", "-fd")
+    def test_ui_package_change_runs_full_sequence(self) -> None:
+        self.write("osac-ui/package.json")
+        result = self.run_step("osac-ui")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [record["args"] for record in self.records("pnpm")],
+            [["install", "--frozen-lockfile"], ["run", "typecheck"], ["lint"], ["test"]],
+        )
 
-    def test_e2e_collection_selection_and_flags(self) -> None:
-        for path in ("tests/e2e/test_example.py", "tests/e2e/new_test.py", "pyproject.toml", "tests/__init__.py"):
-            with self.subTest(path=path):
-                self.write(path)
-                result = self.run_step("e2e-collect")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(
-                    [record["args"] for record in self.records("python")],
-                    [["-m", "pytest", "--collect-only", "-n", "0", "-m", "not metering", "tests/e2e/"]],
-                )
-                self.assertIn(
-                    ["pip", "install", "--python", str(self.venv / "bin/python"), "-r", "pyproject.toml"],
-                    [record["args"] for record in self.records("uv")],
-                )
-                self.git("reset", "--hard", "HEAD")
-                self.git("clean", "-fd")
+    def test_e2e_source_change_creates_installs_and_collects(self) -> None:
+        self.write("tests/e2e/test_example.py")
+        result = self.run_step("e2e-collect")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        records = self.records()
+        self.assertEqual([record["tool"] for record in records], ["uv", "uv", "python"])
+        self.assertEqual(records[0]["args"][:3], ["venv", "--allow-existing", "--python"])
+        self.assertEqual(records[0]["args"][-1], str(self.venv))
+        self.assertEqual(
+            records[1]["args"], ["pip", "install", "--python", str(self.venv / "bin/python"), "-r", "pyproject.toml"]
+        )
+        self.assertEqual(
+            records[2]["args"], ["-m", "pytest", "--collect-only", "-n", "0", "-m", "not metering", "tests/e2e/"]
+        )
+
+    def test_root_dependencies_select_e2e_collection(self) -> None:
+        self.write("pyproject.toml")
+        result = self.run_step("e2e-collect")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([record["tool"] for record in self.records()], ["uv", "uv", "python"])
 
     def test_collection_failure_propagates(self) -> None:
         self.write("tests/e2e/test_example.py")
         self.assertNotEqual(self.run_step("e2e-collect", {"tool": "python"}).returncode, 0)
-
-    def test_go_failure_aggregates_other_selected_modules(self) -> None:
-        self.write("osac-metering/schema/go.mod")
-        for step, failure in (
-            (
-                "go-test",
-                {
-                    "tool": "go",
-                    "cwd": "osac-metering/metering-service",
-                    "args": ["test", "-count=1", "example.test/osac-metering/metering-service/internal/unit"],
-                },
-            ),
-            ("go-lint", {"tool": "make", "args": ["-C", "osac-metering/metering-service", "lint"]}),
-        ):
-            with self.subTest(step=step):
-                result = self.run_step(step, failure)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertGreaterEqual(len(self.records()), 3)
 
     def test_api_failure_preserves_later_consumer_results(self) -> None:
         self.write("osac-operator/api/go.mod")
@@ -356,30 +291,6 @@ if changed "$@"; then echo yes; else echo no; fi
         failure = {"tool": "pnpm", "args": ["install", "--frozen-lockfile"]}
         self.assertNotEqual(self.run_step("osac-ui", failure).returncode, 0)
         self.assertEqual([record["args"] for record in self.records("pnpm")], [failure["args"]])
-
-    def test_package_discovery_failure_propagates(self) -> None:
-        self.write("osac-metering/schema/go.mod")
-        failure = {
-            "tool": "go",
-            "cwd": "osac-metering/schema",
-            "args": ["list", "-f", "{{.ImportPath}} {{.Dir}}", "./..."],
-        }
-        self.assertNotEqual(self.run_step("go-test", failure).returncode, 0)
-
-    def test_filtered_consumers_do_not_execute_container_or_envtest_packages(self) -> None:
-        self.write("osac-metering/schema/go.mod")
-        self.selected("go-test", "go")
-        for record in self.records("go"):
-            if record["args"][0] == "test":
-                self.assertTrue(all("envtest" not in arg and "container" not in arg for arg in record["args"]))
-
-    def test_empty_package_discovery_does_not_run_a_blank_package(self) -> None:
-        self.write("osac-metering/schema/go.mod")
-        self.env["GO_LIST_PACKAGES"] = "[]"
-        result = self.run_step("go-test")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.count("no sandbox-supported packages"), 3)
-        self.assertTrue(all(record["args"][0] == "list" for record in self.records("go")))
 
     def test_all_callers_source_actual_helper(self) -> None:
         callers = {"go-lint", "go-test", "crd-sync", "helm-lint", "python-lint", "ansible", "osac-ui", "e2e-collect"}

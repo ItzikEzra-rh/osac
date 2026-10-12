@@ -145,25 +145,17 @@ All cases below belong to [DEV]
 
 | Behavior | Tier | Execution and boundary |
 |---|---|---|
-| API/schema dependency selection, large tracked/untracked streams, Git fallbacks, UI/E2E routing, and failure propagation | Unit | From the repository root, run `uv run --no-project --with 'pyyaml>=6.0' python tools/test/agentic-ci-validation-smoke.py`; real temporary Git repositories and Bash execute the actual YAML validation bodies, while expensive commands are recording doubles |
+| API/schema dependency selection, large tracked/untracked streams, Git fallbacks, UI/E2E routing, and failure propagation | Unit | Use the [canonical local command](../.agentic-ci/AGENTS.md#touched-area-map); real temporary Git repositories and Bash execute the actual YAML validation bodies, while expensive commands are recording doubles |
 | Production setup and API/schema/UI/E2E scenarios | Component integration | Use the production Autofix image and OpenShell runner with the candidate overlay; actual toolchains, allowed registries, lint, supported unit tests, and pytest collection run. No OSAC deployment, container services, Kubernetes API, or provider is started |
 | Deliberate API test failure | Component integration | Add a failing unit test in an isolated production scenario, verify the go-test validation record fails, and run a clean scenario afterward |
 | Dependency copy-back and optional discard | Component integration | Measure three paired trials on the same production image; add exact generated paths only for median savings of at least 10% and five seconds, then verify restoration on reuse |
 
-API-directory changes select direct API lint/tests plus fulfillment's supported
-unit tests and existing operator/bare-metal consumers. Schema-directory changes
-select lint/tests in schema, adapters, and metering-service. Selected frontend
-validation installs frozen dependencies and runs typecheck, lint, and the full
-unit suite, including untracked tests.
-
-E2E collection uses the root project dependencies in a separate venv outside the
-workdir and runs `pytest --collect-only -n 0 -m 'not metering' tests/e2e/`.
-The metering marker is excluded because the current collection-finish hook
-requires `METERING_ADAPTER_URL`, even during collection. This proves import and
-collection readiness for selected cases, not deployed journeys or metering
-coverage. Selected/deselected counts are revision-specific evidence, not fixed
-thresholds. Retained container, Envtest, network, and live-service exceptions
-are declared in the overlay's skips.
+Full UI validation remains intentional. E2E collection creates an external venv
+and installs root dependencies once, only when selected. The overlay's
+[skips](../.agentic-ci/config.yml) specify container, Envtest, network, live-service
+and metering-collection exceptions. Collection proves import readiness for
+selected cases; deployed journeys and metering coverage require their own gates.
+Selected/deselected counts are revision-specific evidence, not fixed thresholds.
 
 Production evidence must identify the candidate/base commits, image digest,
 runner revision, effective merged profile, and selected toolchain versions.

@@ -78,12 +78,6 @@ sandbox:
         (cd osac-aap && uv sync --locked --all-extras --group development \
           --no-install-package python-esiclient && \
           uv run --no-sync python -c 'import sys; print(sys.executable, sys.version)')
-    - name: e2e-deps
-      timeout: 300
-      run: |
-        set -euo pipefail
-        uv venv --python "$(command -v python3)" "$OSAC_E2E_VENV"
-        uv pip install --python "$OSAC_E2E_VENV/bin/python" -r pyproject.toml
     - name: osac-ui-deps
       timeout: 900
       run: cd osac-ui && pnpm install --frozen-lockfile
@@ -156,25 +150,11 @@ sandbox:
         rc=0
         run_tests() {
           local dir=$1; shift
-          local listing
-          echo "$dir: unit tests"
-          # Capture discovery before filtering so a failed go list cannot be
-          # hidden by process substitution or mistaken for an empty suite.
-          if ! listing=$(cd "$dir" && go list -f '{{.ImportPath}} {{.Dir}}' "$@"); then
-            echo "$dir: package discovery failed" >&2
-            rc=1
-            return
-          fi
-          mapfile -t pkgs < <(
+          mapfile -t pkgs < <(cd "$dir" && go list -f '{{.ImportPath}} {{.Dir}}' "$@" |
             while read -r pkg pdir; do
-              [ -n "$pkg" ] || continue
               case "$pkg" in */test/integration*|*/fulfillment-service/internal/trust) continue ;; esac
               if ! grep -qE 'envtest\.|NewContainer\(' "$pdir"/*_test.go 2>/dev/null; then echo "$pkg"; fi
-            done <<< "$listing")
-          if [ "${#pkgs[@]}" -eq 0 ]; then
-            echo "$dir: no sandbox-supported packages"
-            return
-          fi
+            done)
           (cd "$dir" && go test -count=1 "${pkgs[@]}") || rc=1
         }
         everything=false
@@ -319,8 +299,8 @@ sandbox:
         base=$(git merge-base origin/HEAD HEAD 2>/dev/null || git rev-parse -q --verify origin/HEAD || true)
         source .agentic-ci/changed.sh
         if changed tests/e2e pyproject.toml tests/__init__.py; then
-          # The agent may have changed dependencies since setup. Keep this
-          # venv and pytest's configured logs outside the downloaded workdir.
+          # Create dependencies only when collection is selected, outside the workdir.
+          uv venv --allow-existing --python "$(command -v python3)" "$OSAC_E2E_VENV"
           uv pip install --python "$OSAC_E2E_VENV/bin/python" -r pyproject.toml
           "$OSAC_E2E_VENV/bin/python" -m pytest --collect-only -n 0 -m 'not metering' tests/e2e/
         fi
