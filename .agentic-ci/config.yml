@@ -289,7 +289,10 @@ sandbox:
           pnpm install --frozen-lockfile
           pnpm run typecheck
           pnpm lint
-          pnpm test
+          # The OpenShell sandbox has 2 vCPUs but sees 112 host CPUs. Bound
+          # Vitest to the sandbox allocation instead of spawning one worker
+          # per host CPU.
+          pnpm --filter @osac/app-frontend exec vitest run --maxWorkers=2
         fi
     - name: e2e-collect
       kind: test

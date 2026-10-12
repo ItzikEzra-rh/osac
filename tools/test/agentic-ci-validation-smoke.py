@@ -249,7 +249,12 @@ if changed "$@"; then echo yes; else echo no; fi
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             [record["args"] for record in self.records("pnpm")],
-            [["install", "--frozen-lockfile"], ["run", "typecheck"], ["lint"], ["test"]],
+            [
+                ["install", "--frozen-lockfile"],
+                ["run", "typecheck"],
+                ["lint"],
+                ["--filter", "@osac/app-frontend", "exec", "vitest", "run", "--maxWorkers=2"],
+            ],
         )
 
     def test_e2e_source_change_creates_installs_and_collects(self) -> None:
