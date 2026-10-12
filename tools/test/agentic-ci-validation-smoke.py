@@ -106,9 +106,12 @@ class SandboxValidationTests(unittest.TestCase):
         self.commit()
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-        profile = yaml.safe_load((ROOT / ".agentic-ci/config.yml").read_text())["sandbox"]
-        self.steps = {step["name"]: step["run"] for step in profile["validate"]}
-        self.assertNotIn("e2e-deps", {step["name"] for step in profile["setup"]})
+        self.profile = yaml.safe_load((ROOT / ".agentic-ci/config.yml").read_text())["sandbox"]
+        self.steps = {step["name"]: step["run"] for step in self.profile["validate"]}
+        self.assertNotIn("e2e-deps", {step["name"] for step in self.profile["setup"]})
+
+    def test_discard_before_download_is_limited_to_measured_generated_caches(self) -> None:
+        self.assertEqual(self.profile["discard_before_download"], ["osac-ui/node_modules", "osac-aap/.venv"])
 
     def write(self, path: str, body: str = "changed\n") -> None:
         target = self.repo / path

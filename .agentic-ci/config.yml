@@ -6,8 +6,9 @@
 # https://github.com/opendatahub-io/agentic-ci/blob/main/docs/sandbox-profiles.md
 # An overlay may pin catalog toolchains, open only the goproxy, npm and pypi
 # egress presets, run `setup` steps in the sandbox before the agent and
-# `validate` steps after it, declare `skips` and set `env`. Anything wider
-# (more hosts, resources) is configured centrally in autofix.
+# `validate` steps after it, declare `skips`, set `env`, and list measured
+# generated paths to omit from copy-back. Anything wider (more hosts, resources)
+# is configured centrally in autofix.
 #
 # Versions mirror the repo's own pins: go.work (go), tools/golangci-lint.mk
 # (golangci-lint), helm-lint.yaml (helm), osac-ui/package.json packageManager
@@ -39,6 +40,10 @@ sandbox:
     LOCALBIN: "/sandbox/.local/share/osac/bin"
     GOLANGCI_LINT_BIN: "/sandbox/.local/share/osac/golangci-lint"
     OSAC_E2E_VENV: "/sandbox/.local/share/osac/e2e-venv"
+
+  discard_before_download:
+    - osac-ui/node_modules
+    - osac-aap/.venv
 
   setup:
     - name: go-modules

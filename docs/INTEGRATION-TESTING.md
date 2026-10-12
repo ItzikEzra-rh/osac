@@ -148,7 +148,7 @@ All cases below belong to [DEV]
 | API/schema dependency selection, large tracked/untracked streams, Git fallbacks, UI/E2E routing, and failure propagation | Unit | Use the [canonical local command](../.agentic-ci/AGENTS.md#touched-area-map); real temporary Git repositories and Bash execute the actual YAML validation bodies, while expensive commands are recording doubles |
 | Production setup and API/schema/UI/E2E scenarios | Component integration | Use the production Autofix image and OpenShell runner with the candidate overlay; actual toolchains, allowed registries, lint, supported unit tests, and pytest collection run. No OSAC deployment, container services, Kubernetes API, or provider is started |
 | Deliberate API test failure | Component integration | Add a failing unit test in an isolated production scenario, verify the go-test validation record fails, and run a clean scenario afterward |
-| Dependency copy-back and optional discard | Component integration | Measure three paired trials on the same production image; add exact generated paths only for median savings of at least 10% and five seconds, then verify restoration on reuse |
+| Dependency copy-back and optional discard | Component integration | Measure three paired trials on the same production image; add exact generated paths only for median savings of at least 10% and five seconds, then verify restoration on reuse. The current overlay discards only `osac-ui/node_modules` and `osac-aap/.venv`. |
 
 Full UI validation remains intentional. E2E collection creates an external venv
 and installs root dependencies once, only when selected. The overlay's
