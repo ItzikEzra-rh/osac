@@ -33,6 +33,8 @@ sandbox:
     - pypi
 
   env:
+    # This sandbox has 2 vCPUs but reports the VM's 112 host CPUs to Go.
+    GOMAXPROCS: "2"
     GOFLAGS: "-modcacherw"
     UV_PYTHON_DOWNLOADS: "never"
     # Keep the Makefile-installed tools (controller-gen, golangci-lint) out of
