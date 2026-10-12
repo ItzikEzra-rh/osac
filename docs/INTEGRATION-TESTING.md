@@ -153,7 +153,7 @@ All cases below belong to [DEV]
 Full UI validation remains intentional. E2E collection creates an external venv
 and installs root dependencies once, only when selected. The overlay's
 [skips](../.agentic-ci/config.yml) specify container, Envtest, network, live-service
-and metering-collection exceptions. Collection proves import readiness for
+and metering-execution exceptions. Collection proves import readiness for
 selected cases; deployed journeys and metering coverage require their own gates.
 Selected/deselected counts are revision-specific evidence, not fixed thresholds.
 

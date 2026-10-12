@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -124,14 +125,9 @@ class SandboxValidationTests(unittest.TestCase):
     def run_step(self, name: str, failure: dict[str, Any] | None = None) -> subprocess.CompletedProcess[str]:
         self.log.write_text("")
         env = {**self.env, "FAIL_COMMAND": json.dumps(failure or {})}
+        script = f"export PATH={shlex.quote(env['PATH'])}\n{self.steps[name]}"
         return subprocess.run(
-            ["bash", "-c", self.steps[name]],
-            cwd=self.repo,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=30,
-            check=False,
+            ["bash", "-c", script], cwd=self.repo, env=env, text=True, capture_output=True, timeout=30, check=False
         )
 
     def records(self, tool: str | None = None) -> list[dict[str, Any]]:
@@ -149,6 +145,7 @@ base=$(git merge-base origin/HEAD HEAD 2>/dev/null || git rev-parse -q --verify 
 source .agentic-ci/changed.sh
 if changed "$@"; then echo yes; else echo no; fi
 """
+        script = f"export PATH={shlex.quote(self.env['PATH'])}\n{script}"
         result = subprocess.run(
             ["bash", "-c", script, "fixture", *paths],
             cwd=self.repo,

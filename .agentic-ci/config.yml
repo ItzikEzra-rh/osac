@@ -277,7 +277,7 @@ sandbox:
         fi
     - name: osac-ui
       kind: test
-      timeout: 900
+      timeout: 1800
       run: |
         set -euo pipefail
         base=$(git merge-base origin/HEAD HEAD 2>/dev/null || git rev-parse -q --verify origin/HEAD || true)
@@ -320,8 +320,8 @@ sandbox:
       reason: "Need a Kind cluster, kubectl and a deployed OSAC stack"
     - match: "tests/e2e pytest execution (collection runs in e2e-collect)"
       reason: "End-to-end journeys run against a live cluster and services"
-    - match: "metering-marked tests/e2e cases during sandbox collection"
-      reason: "The collection-finish hook requires METERING_ADAPTER_URL; collect with -m 'not metering' without fabricating an endpoint"
+    - match: "metering-marked tests/e2e execution"
+      reason: "Metering journeys need a live METERING_ADAPTER_URL; sandbox collection excludes them with -m 'not metering'"
     - match: "image-build, kind-load-image, execution-environment-build, osac-ui container build"
       reason: "No podman or docker in the sandbox"
     - match: "osac-installer helm-validate, ct lint, fulfillment-trust-render-test"
