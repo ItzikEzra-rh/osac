@@ -152,12 +152,14 @@ Before opening a pull request:
 - Cite the executed command and working directory per row. Lint, typecheck,
   collection, and schema-generation checks are build validation, not
   integration evidence.
-- Missing or wrong-tier coverage is reported as a gap linked to its owning
-  follow-up ticket using the Jira URL — never as covered. If no owner or
-  ticket exists, report the gap as unresolved.
+- Missing or wrong-tier coverage is reported as a gap, never as covered. Link
+  it to the owning follow-up ticket using its Jira URL when one exists. If no
+  owner or ticket exists, report the gap as unresolved; do not invent a ticket.
 - The PR description or review report must state, per touched boundary: the
-  exercised boundary, running dependencies, executed command, and result —
-  or the unresolved gap with its owning ticket.
+  exercised boundary, running dependencies, executed command, and result — or
+  report the gap as unresolved with its owning ticket URL when one exists. If
+  there is no owner or ticket, state that explicitly; never claim the boundary
+  is covered.
 
 ## fulfillment-service
 
