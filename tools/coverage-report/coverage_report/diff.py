@@ -118,7 +118,6 @@ def build_diff(
             "mapping_class_changes": [],
             "execution_status_changes": [],
             "availability_changes": [],
-            "transitions": [],
         }
 
     before_metrics = _metrics_by_key(previous)
@@ -202,23 +201,6 @@ def build_diff(
         )
     ]
 
-    transitions = []
-    for (feature, tier), after in sorted(after_metrics.items()):
-        before = before_metrics.get((feature, tier))
-        if before is None:
-            continue
-        previous_state = str(before.get("state"))
-        state = str(after.get("state"))
-        if previous_state != state:
-            transitions.append(
-                {
-                    "feature": feature,
-                    "tier": tier,
-                    "previous_state": previous_state,
-                    "state": state,
-                }
-            )
-
     previous_run_id = previous.get("run_id")
     return {
         "previous_run_id": (
@@ -234,5 +216,4 @@ def build_diff(
         "mapping_class_changes": mapping_class_changes,
         "execution_status_changes": execution_changes,
         "availability_changes": availability_changes,
-        "transitions": transitions,
     }

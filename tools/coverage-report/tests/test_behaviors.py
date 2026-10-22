@@ -298,8 +298,8 @@ class TestTierOverrides(TestplanFixtureCase):
         write_file(
             root,
             "config/mappings/OSAC-1111.yaml",
-            "version: 1\nfeature: OSAC-1111\nreviewed_by: {0}\n"
-            "behavior_tiers:\n{1}".format("qe-team", behavior_tiers),
+            "version: 1\nfeature: OSAC-1111\nreviewed_by: \"{0}\"\n"
+            "behavior_tiers:\n{1}".format("@qe-team", behavior_tiers),
         )
         return collect_inventory(ctx)[0]
 
@@ -344,6 +344,22 @@ class TestTierOverrides(TestplanFixtureCase):
         self.assertIs(overridden.required_tier, Tier.E2E)
         self.assertEqual(overridden.tier_origin, "testplan")
         self.assertIn("TIER_OVERRIDE_INVALID", codes(inventory.diagnostics))
+
+    def test_malformed_mapping_file_is_reported(self):
+        root, ctx = self.build(fixture("tier-columns.md"), key="OSAC-1111")
+        write_file(root, "config/mappings/OSAC-1111.yaml", "not: [valid")
+
+        inventory = collect_inventory(ctx)[0]
+
+        self.assertIn("MAPPING_CONFIG_INVALID", codes(inventory.diagnostics))
+
+    def test_non_mapping_file_is_reported(self):
+        root, ctx = self.build(fixture("tier-columns.md"), key="OSAC-1111")
+        write_file(root, "config/mappings/OSAC-1111.yaml", "- just\n- a list\n")
+
+        inventory = collect_inventory(ctx)[0]
+
+        self.assertIn("MAPPING_CONFIG_INVALID", codes(inventory.diagnostics))
 
     def test_unknown_override_behavior_is_reported(self):
         inventory = self.build_with_tiers("  TC-FR9-99: integration\n")

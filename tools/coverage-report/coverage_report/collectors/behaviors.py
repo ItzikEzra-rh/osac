@@ -390,11 +390,6 @@ def tier_details(
     return tier, label or None, remainder or None
 
 
-def tier_from_text(value: Optional[str]) -> Optional[Tier]:
-    """Map a declared tier label to the model's primary tier."""
-    return tier_details(value)[0]
-
-
 def infer_tier_from_path(path: str) -> Optional[Tier]:
     """Infer a tier from a repository path.
 

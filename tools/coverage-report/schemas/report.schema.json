@@ -1540,8 +1540,7 @@
         "behaviors_removed",
         "mapping_class_changes",
         "execution_status_changes",
-        "availability_changes",
-        "transitions"
+        "availability_changes"
       ],
       "properties": {
         "previous_run_id": {
@@ -1824,38 +1823,6 @@
                   "string",
                   "null"
                 ]
-              }
-            }
-          }
-        },
-        "transitions": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "feature",
-              "tier",
-              "previous_state",
-              "state"
-            ],
-            "properties": {
-              "feature": {
-                "type": "string"
-              },
-              "tier": {
-                "type": "string",
-                "enum": [
-                  "unit",
-                  "integration",
-                  "e2e"
-                ]
-              },
-              "previous_state": {
-                "type": "string"
-              },
-              "state": {
-                "type": "string"
               }
             }
           }

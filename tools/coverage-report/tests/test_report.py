@@ -146,7 +146,7 @@ TESTPLAN = """\
 MAPPING_YAML = """\
 version: 1
 feature: OSAC-1111
-reviewed_by: qe-team
+reviewed_by: "@qe-team"
 mappings:
   - behavior: TC-FR1-01
     tests:
@@ -878,6 +878,9 @@ class TestMarkdownEscaping(unittest.TestCase):
             _cell(title),
             "line one line two \\<img src=x\\> \\[x\\](http://e)",
         )
+
+    def test_an_existing_escape_cannot_smuggle_a_separator(self):
+        self.assertEqual(_cell("a\\|b"), "a\\\\\\|b")
 
     def test_table_and_emphasis_characters_are_escaped(self):
         self.assertEqual(

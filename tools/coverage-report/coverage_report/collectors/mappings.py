@@ -30,10 +30,9 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-import yaml
-
 from ..errors import CoverageReportError
 from ..manifest import relative_path
+from ..mapping_file import read_mapping_file
 from ..model import Boundary, CollectorBatch, Diagnostic, EvidenceClass, EvidenceRecord, Tier, make_evidence_id
 from ..review import is_invalid_reviewer, is_reviewed
 from . import CollectorContext
@@ -49,7 +48,6 @@ from .behaviors import (
     infer_tier_from_path,
     normalize_testplan_text,
 )
-from .tier_overrides import mapping_config_path
 
 COLLECTOR_NAME = "mappings"
 
@@ -119,6 +117,9 @@ _RELATED_CASE_TOKEN_RE = re.compile(r"TC-[A-Za-z0-9._-]+")
 
 _DESCRIBE_RE = re.compile(r"(?:Describe|Context)\(\s*\"([^\"]+)\"")
 _PYTEST_DEF_RE = re.compile(r"^\s*def (test_[A-Za-z0-9_]+)\s*\(", re.MULTILINE)
+_TEST_HEADER_RE = re.compile(
+    r"Describe\(|Context\(|func Test|^\s*def test_|^class Test"
+)
 
 _SECTION_RE = re.compile(r"^##\s+(?P<name>.+?)\s*$")
 _BULLET_START_RE = re.compile(r"^-\s+")
@@ -301,19 +302,6 @@ def _anchor_patterns(feature) -> Tuple[re.Pattern[str], ...]:
 
 def _text_has_anchor(text: str, patterns: Sequence[re.Pattern[str]]) -> bool:
     return any(pattern.search(text) for pattern in patterns)
-
-
-def _enclosing_line_has_anchor(
-    lines: Sequence[str], index: int, patterns: Sequence[re.Pattern[str]]
-) -> bool:
-    """Check the nearest preceding describe/test header, or the reference line."""
-    if index < len(lines) and _text_has_anchor(lines[index], patterns):
-        return True
-    for position in range(index - 1, -1, -1):
-        line = lines[position]
-        if re.search(r"Describe\(|Context\(|func Test|^\s*def test_|^class Test", line):
-            return _text_has_anchor(line, patterns)
-    return False
 
 
 def _record(
@@ -721,36 +709,19 @@ def load_mapping_config(
     *,
     diagnostics: List[Diagnostic],
 ) -> Optional[Dict[str, object]]:
-    path = mapping_config_path(ctx, feature.key)
-    if path is None:
-        return None
-
-    display = relative_path(ctx.repo_root, path)
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = yaml.safe_load(handle)
-    except (OSError, yaml.YAMLError) as error:
+    data, display, error = read_mapping_file(ctx, feature.key)
+    if error:
         diagnostics.append(
             _diagnostic(
                 ctx,
                 code="MAPPING_CONFIG_INVALID",
-                message="could not read mapping file {0}: {1}".format(display, error),
+                message=error,
                 severity="error",
                 recovery="Fix the YAML syntax and file permissions.",
             )
         )
         return None
-
-    if not isinstance(data, dict):
-        diagnostics.append(
-            _diagnostic(
-                ctx,
-                code="MAPPING_CONFIG_INVALID",
-                message="mapping file {0} is not a YAML mapping".format(display),
-                severity="error",
-                recovery="Start the file with version: 1, feature: <KEY>, mappings: [].",
-            )
-        )
+    if data is None:
         return None
 
     if data.get("version") != CONFIG_VERSION:
@@ -1042,6 +1013,15 @@ def _test_reference_records(
 
         lines = text.split("\n")
         file_anchored = _text_has_anchor(text, patterns)
+        # One forward pass records the effective anchor of the nearest
+        # describe/test header for every line.
+        enclosing_anchor: List[bool] = []
+        current_anchor = False
+        for line in lines:
+            if _TEST_HEADER_RE.search(line):
+                current_anchor = _text_has_anchor(line, patterns) or current_anchor
+            enclosing_anchor.append(current_anchor)
+
         seen: Dict[str, int] = {}
         first_line: Dict[str, int] = {}
         anchored: Dict[str, str] = {}
@@ -1053,7 +1033,7 @@ def _test_reference_records(
                 seen[tc_id] += 1
                 if tc_id in anchored:
                     continue
-                if _enclosing_line_has_anchor(lines, index, patterns):
+                if _text_has_anchor(line, patterns) or enclosing_anchor[index]:
                     anchored[tc_id] = "enclosing"
                 elif file_anchored:
                     anchored[tc_id] = "file"

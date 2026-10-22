@@ -14,13 +14,13 @@ Two invariants matter more than anything else:
 """
 
 import hashlib
-import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .errors import EvidencePromotionError, ModelError
+from .serialize import compact_json
 
 EVIDENCE_ID_PREFIX = "ev-"
 EVIDENCE_ID_HEX_LENGTH = 16
@@ -632,11 +632,11 @@ class MergedBatches:
 
 
 def _canonical_record_payload(record: EvidenceRecord) -> str:
-    return json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":"))
+    return compact_json(record.to_dict())
 
 
 def _canonical_metric_payload(metric: Metric) -> str:
-    return json.dumps(metric.to_dict(), sort_keys=True, separators=(",", ":"))
+    return compact_json(metric.to_dict())
 
 
 def _dedupe_by_key(
@@ -656,12 +656,16 @@ def _dedupe_by_key(
     seen: Dict[object, str] = {}
     for item in items:
         item_key = key(item)
-        item_payload = payload(item)
-        if item_key not in seen:
-            seen[item_key] = item_payload
+        if item_key not in chosen:
             chosen[item_key] = item
             continue
-        if seen[item_key] != item_payload:
+        # Only a repeated key needs the comparison payload.
+        item_payload = payload(item)
+        existing_payload = seen.get(item_key)
+        if existing_payload is None:
+            existing_payload = payload(chosen[item_key])
+            seen[item_key] = existing_payload
+        if existing_payload != item_payload:
             raise ModelError(
                 "conflicting {0} for key {1!r}: two collectors produced different "
                 "content for the same identity".format(kind, item_key),
@@ -742,9 +746,7 @@ def merge_batches(batches: Iterable[CollectorBatch]) -> MergedBatches:
     merged_behaviors = _dedupe_by_key(
         behaviors,
         key=lambda behavior: behavior.id,
-        payload=lambda behavior: json.dumps(
-            behavior.to_dict(), sort_keys=True, separators=(",", ":")
-        ),
+        payload=lambda behavior: compact_json(behavior.to_dict()),
         kind="behavior",
     )
     merged_metrics = _dedupe_by_key(
@@ -758,9 +760,7 @@ def merge_batches(batches: Iterable[CollectorBatch]) -> MergedBatches:
         key=lambda diagnostic: tuple(
             str(part) for part in diagnostic.to_dict().items()
         ),
-        payload=lambda diagnostic: json.dumps(
-            diagnostic.to_dict(), sort_keys=True, separators=(",", ":")
-        ),
+        payload=lambda diagnostic: compact_json(diagnostic.to_dict()),
         kind="diagnostic",
     )
     # Two collectors may read the same test plan (the behavior and mapping
@@ -769,9 +769,7 @@ def merge_batches(batches: Iterable[CollectorBatch]) -> MergedBatches:
     merged_inventories = _dedupe_by_key(
         inventories,
         key=lambda inventory: inventory.feature,
-        payload=lambda inventory: json.dumps(
-            inventory.to_dict(), sort_keys=True, separators=(",", ":")
-        ),
+        payload=lambda inventory: compact_json(inventory.to_dict()),
         kind="inventory",
     )
 

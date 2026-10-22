@@ -19,14 +19,10 @@ override stays unassigned, which blocks the tier metrics instead of producing a
 precise-looking percentage from an incomplete denominator.
 """
 
-import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List
 
-import yaml
-
-from ..config import bundled_features_file
-from ..manifest import relative_path
+from ..mapping_file import read_mapping_file
 from ..model import Diagnostic, Tier
 from ..review import is_reviewed
 from . import CollectorContext
@@ -36,8 +32,6 @@ ORIGIN_MAPPING_CONFIG = "mapping-config"
 
 OPERATION = "resolve_tier"
 
-CONFIG_DIR_NAME = "mappings"
-
 
 @dataclass(frozen=True)
 class TierAssignment:
@@ -46,22 +40,6 @@ class TierAssignment:
     tier: Tier
     origin: str
     reviewed: bool
-
-
-def mapping_config_path(ctx: CollectorContext, feature_key: str) -> Optional[str]:
-    """Return the mapping file for a feature, repository first, then bundled."""
-    directories = (
-        os.path.join(ctx.repo_root, "config", CONFIG_DIR_NAME),
-        os.path.join(os.path.dirname(bundled_features_file()), CONFIG_DIR_NAME),
-    )
-    # .yaml wins over .yml in each location; the repository wins over the
-    # bundled copy. This is the single place the convention is decided.
-    for directory in directories:
-        for extension in (".yaml", ".yml"):
-            candidate = os.path.join(directory, feature_key + extension)
-            if os.path.isfile(candidate):
-                return candidate
-    return None
 
 
 def _diagnostic(
@@ -95,21 +73,21 @@ def load_tier_overrides(
     entries that name a known tier. Unknown behavior ids are reported so a typo
     cannot silently leave a behavior unassigned.
     """
-    path = mapping_config_path(ctx, feature.key)
-    if path is None:
+    data, display, error = read_mapping_file(ctx, feature.key)
+    if error:
+        diagnostics.append(
+            _diagnostic(
+                ctx,
+                code="MAPPING_CONFIG_INVALID",
+                message=error,
+                severity="error",
+                recovery="Fix the YAML syntax and file permissions.",
+            )
+        )
+        return {}
+    if data is None:
         return {}
 
-    display = relative_path(ctx.repo_root, path)
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = yaml.safe_load(handle)
-    except (OSError, yaml.YAMLError):
-        # The mapping collector owns mapping-file diagnostics; a tier reader
-        # must not fail the run over a file it does not own.
-        return {}
-
-    if not isinstance(data, dict):
-        return {}
     raw = data.get("behavior_tiers")
     if raw is None:
         return {}

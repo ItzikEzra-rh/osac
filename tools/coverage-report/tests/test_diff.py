@@ -191,8 +191,6 @@ class TestDiff(unittest.TestCase):
                 }
             ],
         )
-        self.assertEqual(len(diff["transitions"]), 1)
-        self.assertEqual(diff["transitions"][0]["state"], "value")
 
     def test_metrics_added_and_removed(self):
         diff = build_diff(

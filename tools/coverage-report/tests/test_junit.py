@@ -385,6 +385,15 @@ class TestDiscovery(JunitTestCase):
 
 
 class TestUnreadableInputs(JunitTestCase):
+    def test_missing_explicit_input_is_reported(self):
+        missing = str(self.repo / "missing.xml")
+
+        batch = self.collect(explicit=[missing])
+
+        self.assertEqual(batch.records, ())
+        self.assertEqual(self.codes(batch), ["JUNIT_UNREADABLE"])
+        self.assertIn("missing.xml", batch.diagnostics[0].message)
+
     def test_malformed_file_does_not_drop_valid_evidence(self):
         self.write_fixture(
             "fulfillment-service/it/reports/ginkgo.xml", "ginkgo-integration.xml"

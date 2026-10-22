@@ -7,8 +7,9 @@
 # PENDING-REVIEW as INFERRED_MAPPING (heuristic "unreviewed-config") so no AI
 # suggestion can masquerade as a reviewed claim.
 #
-# To promote an entry, replace reviewed_by with the QE owner's GitHub handle or
-# team name after checking that the named test actually asserts the behavior.
+# To promote an entry, replace reviewed_by with a GitHub user handle (@name) or
+# a team (org/team, optionally @org/team) after checking that the named test
+# actually asserts the behavior. A bare user name is not accepted.
 # Mapping at Describe granularity (name: DiskImage API) means "this file and
 # suite cover the case", not that one spec asserts every step.
 version: 1

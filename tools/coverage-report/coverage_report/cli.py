@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import TOOL_VERSION
 from .collectors import CollectorContext, builtin, registered  # noqa: F401
-from .collectors.tier_overrides import mapping_config_path
+from .mapping_file import mapping_config_path
 from .config import CliOverrides, EffectiveConfig, load_config
 from .diff import build_diff
 from .errors import ConfigError, CoverageReportError, RepoError, ScopeError
@@ -307,7 +307,6 @@ def _collect(
                     ],
                 )
             )
-            diagnostics.extend(batch.diagnostics)
         except Exception as error:  # noqa: BLE001 - isolate collector failures
             diagnostics.append(
                 Diagnostic(
@@ -514,22 +513,6 @@ def _validate_previous(previous: object) -> Dict[str, object]:
     return previous
 
 
-def _dedupe_diagnostics(
-    diagnostics: Sequence[Diagnostic],
-) -> List[Diagnostic]:
-    """Collapse identical diagnostics and sort them deterministically.
-
-    A collector's diagnostics reach this point twice: once through its batch
-    and once through the per-collector status list. Identical text is one fact,
-    so it must appear once in the report.
-    """
-    chosen: Dict[str, Diagnostic] = {}
-    for diagnostic in diagnostics:
-        key = json.dumps(diagnostic.to_dict(), sort_keys=True, separators=(",", ":"))
-        chosen.setdefault(key, diagnostic)
-    return sorted(chosen.values(), key=lambda diagnostic: diagnostic.sort_key())
-
-
 def _publish_report(
     *,
     config: EffectiveConfig,
@@ -720,14 +703,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
 
         feature_keys = {feature.key for feature in features}
-        evidence_in_scope = [
-            record for record in merged.records if record.feature in feature_keys
-        ]
-        behaviors_in_scope = [
-            behavior
-            for behavior in merged.behaviors
-            if behavior.id.split("/", 1)[0] in feature_keys
-        ]
+        # _collect rejects out-of-scope output; assert the invariant here
+        # instead of filtering the merged collections once per feature.
+        records_by_feature: Dict[str, List[EvidenceRecord]] = {}
+        for record in merged.records:
+            assert record.feature in feature_keys, record.feature
+            records_by_feature.setdefault(record.feature, []).append(record)
+        behaviors_by_feature: Dict[str, List[Behavior]] = {}
+        for behavior in merged.behaviors:
+            feature_key = behavior.id.split("/", 1)[0]
+            assert feature_key in feature_keys, behavior.id
+            behaviors_by_feature.setdefault(feature_key, []).append(behavior)
+        evidence_in_scope = list(merged.records)
+        behaviors_in_scope = list(merged.behaviors)
         inventory_by_feature = {
             inventory.feature: inventory for inventory in merged.inventories
         }
@@ -737,16 +725,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         all_gaps: List[Dict[str, object]] = []
 
         for feature in features:
-            feature_records = [
-                record
-                for record in evidence_in_scope
-                if record.feature == feature.key
-            ]
-            feature_behaviors = [
-                behavior
-                for behavior in behaviors_in_scope
-                if behavior.id.split("/", 1)[0] == feature.key
-            ]
+            feature_records = records_by_feature.get(feature.key, [])
+            feature_behaviors = behaviors_by_feature.get(feature.key, [])
             inventory = inventory_by_feature.get(feature.key)
 
             unit_metric, unit_diagnostics = _unit_metric(
@@ -901,10 +881,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             for feature in features
             for tier in TIER_ORDER
         ]
-        diagnostics = _dedupe_diagnostics(
+        diagnostics = sorted(
             list(merged.diagnostics)
             + list(collector_diagnostics)
-            + list(engine_diagnostics)
+            + list(engine_diagnostics),
+            key=lambda diagnostic: diagnostic.sort_key(),
         )
 
         summary = build_summary(

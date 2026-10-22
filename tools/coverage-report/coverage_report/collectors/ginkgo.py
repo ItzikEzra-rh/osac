@@ -23,8 +23,6 @@ evidence ``current``; a different one makes it ``stale``; a missing revision is
 ``unknown`` and is reported as a diagnostic rather than silently trusted.
 """
 
-import glob
-import os
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
@@ -52,6 +50,7 @@ from ..unit_metrics import (
     percent_of,
 )
 from . import CollectorContext
+from .artifacts import discover_artifacts
 
 #: Collector name used in evidence ids and diagnostics. Registration is owned by
 #: the CLI wiring, not by this module.
@@ -377,24 +376,6 @@ def _sidecar_string(
         return None
     value = data.get(key)
     return value if isinstance(value, str) and value else None
-
-
-def _discover_profiles(ctx: CollectorContext) -> Tuple[str, ...]:
-    """Return coverprofile paths, explicit inputs first, otherwise config globs.
-
-    Explicit paths are used verbatim (the CLI already resolved and validated
-    them). Configured entries are globs relative to the repository root.
-    """
-    explicit = ctx.explicit_inputs.get("coverprofile") or ()
-    if explicit:
-        return tuple(sorted(explicit))
-
-    matches: Set[str] = set()
-    for pattern in ctx.config.coverprofiles:
-        for candidate in glob.glob(pattern, recursive=True):
-            if os.path.isfile(candidate):
-                matches.add(os.path.abspath(candidate))
-    return tuple(sorted(matches))
 
 
 def _read_profile(
@@ -770,7 +751,9 @@ class GinkgoUnitCollector:
         features = tuple(sorted(ctx.features, key=lambda feature: feature.key))
         diagnostics: List[Diagnostic] = []
 
-        paths = _discover_profiles(ctx)
+        paths = discover_artifacts(
+            ctx, "coverprofile", ctx.config.coverprofiles
+        )
         if not paths:
             return _empty_batch(ctx, features)
 

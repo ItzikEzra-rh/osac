@@ -5,7 +5,12 @@ import unittest
 
 import path_setup  # noqa: F401  (adds the package root to sys.path)
 
-from coverage_report.serialize import VOLATILE_FIELDS, canonical_digest, canonical_json
+from coverage_report.serialize import (
+    VOLATILE_FIELDS,
+    canonical_digest,
+    canonical_json,
+    compact_json,
+)
 
 
 class TestCanonicalJson(unittest.TestCase):
@@ -33,6 +38,9 @@ class TestCanonicalJson(unittest.TestCase):
 
     def test_digest_changes_with_content(self):
         self.assertNotEqual(canonical_digest({"a": 1}), canonical_digest({"a": 2}))
+
+    def test_compact_json_is_sorted_and_whitespace_free(self):
+        self.assertEqual(compact_json({"b": 1, "a": [2, 3]}), '{"a":[2,3],"b":1}')
 
     def test_generated_at_is_the_only_documented_volatile_field(self):
         self.assertEqual(VOLATILE_FIELDS, ("generated_at",))

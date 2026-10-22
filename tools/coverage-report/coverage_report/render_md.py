@@ -5,7 +5,8 @@ not compute a percentage, join evidence, or decide a verdict: every number and
 state shown here was decided by the engine and is present in ``report.json``.
 """
 
-from typing import List, Mapping, Sequence
+import re
+from typing import Dict, List, Mapping, Sequence
 
 from .model import TIER_ORDER
 
@@ -21,7 +22,9 @@ _EVIDENCE_CLASS_LEGEND = (
 
 
 #: Characters that could change Markdown structure or inject HTML/images/links.
-_MARKDOWN_SPECIALS = ("|", "`", "<", ">", "[", "]", "!", "*", "_")
+#: The backslash is included so an existing escape cannot smuggle a separator
+#: through a single pass.
+_MARKDOWN_SPECIAL_RE = re.compile(r"([\\`*_\[\]<>!|])")
 
 
 def _cell(value: object) -> str:
@@ -29,14 +32,12 @@ def _cell(value: object) -> str:
 
     Table cells carry evidence-controlled text (test titles, paths, diagnostic
     messages). Newlines become spaces so a value cannot start a new block, and
-    inline HTML, images, links, emphasis, code spans, and cell separators are
-    escaped.
+    backslashes, inline HTML, images, links, emphasis, code spans, and cell
+    separators are escaped in one pass.
     """
     text = str(value if value is not None else "")
     text = text.replace("\r", " ").replace("\n", " ")
-    for character in _MARKDOWN_SPECIALS:
-        text = text.replace(character, "\\" + character)
-    return text
+    return _MARKDOWN_SPECIAL_RE.sub(r"\\\1", text)
 
 
 def _percent(value: object) -> str:
@@ -288,13 +289,7 @@ def _gap_table(gaps: Sequence[Mapping[str, object]]) -> List[str]:
     return lines
 
 
-def _package_table(records: Sequence[Mapping[str, object]], feature: str) -> List[str]:
-    measured = [
-        record
-        for record in records
-        if record.get("feature") == feature
-        and record.get("evidence_class") == "measured"
-    ]
+def _package_table(measured: Sequence[Mapping[str, object]]) -> List[str]:
     if not measured:
         return []
     lines = [
@@ -317,6 +312,12 @@ def _package_table(records: Sequence[Mapping[str, object]], feature: str) -> Lis
 def _detail(report: Mapping[str, object]) -> List[str]:
     lines = ["## Detail", ""]
     evidence = report.get("evidence") or []
+    measured_by_feature: Dict[str, List[Mapping[str, object]]] = {}
+    for record in evidence:
+        if record.get("evidence_class") == "measured":
+            measured_by_feature.setdefault(str(record.get("feature")), []).append(
+                record
+            )
     for feature in report.get("features") or []:
         key = feature.get("key")
         lines.extend(
@@ -342,7 +343,7 @@ def _detail(report: Mapping[str, object]) -> List[str]:
                 tiers.get("unit", {}), breakdown.get("unit", {})
             )
         )
-        packages = _package_table(evidence, str(key))
+        packages = _package_table(measured_by_feature.get(str(key), []))
         if packages:
             lines.extend([""] + packages)
         unit_behaviors = int(feature.get("unit_behaviors") or 0)

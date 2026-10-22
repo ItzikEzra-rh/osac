@@ -378,7 +378,6 @@ class TestInputsAndComparison(CliTestCase):
         self.assertEqual(second_exit, 0, stderr)
         report = self.read_report()
         self.assertEqual(report["comparison"]["previous_run_id"], previous_run_id)
-        self.assertEqual(report["comparison"]["transitions"], [])
         self.assertIn("previous_report", self.read_manifest())
 
     def test_invalid_previous_report_exits_3(self):

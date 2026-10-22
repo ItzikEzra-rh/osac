@@ -48,11 +48,10 @@ aliases overlap. Unattributed testcases are dropped and counted in one
 ``EXECUTION_UNATTRIBUTED`` diagnostic.
 """
 
-import glob
 import os
 import re
 from dataclasses import dataclass, replace
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 from xml.etree import ElementTree
 
 from ..model import (
@@ -68,6 +67,7 @@ from ..model import (
 from ..manifest import relative_path
 from ..sidecar import read_sidecar
 from . import CollectorContext
+from .artifacts import discover_artifacts
 from .behaviors import infer_tier_from_path
 from .mappings import load_mapping_config, mapping_test_entries
 
@@ -189,36 +189,6 @@ def execution_match_keys(
     )
 
 
-def test_identity_matches(
-    *,
-    mapped_name: str,
-    mapped_path: str,
-    identity: str,
-    name: str = "",
-    path: str = "",
-    source: str = "",
-) -> bool:
-    """Return whether one mapping entry names this execution.
-
-    A mapped name matches the identity, the explicit name, or a ``::``-bounded
-    prefix of the identity. When the mapping has no name, a path match is
-    required, either exact or as a path suffix. This is the only identity rule;
-    the metrics engine uses :func:`execution_match_keys` to build the same
-    match as an index lookup.
-    """
-    keys = execution_match_keys(identity, path, source)
-    target = match_key(mapped_name)
-    if target:
-        if target == keys.identity or target == match_key(name):
-            return True
-        return target in keys.prefixes
-
-    mapped = normalize_test_path(mapped_path)
-    if not mapped:
-        return False
-    return mapped in keys.path_suffixes
-
-
 @dataclass(frozen=True)
 class _Observation:
     """A single testcase before cross-file deduplication."""
@@ -242,7 +212,9 @@ class JunitCollector:
     def collect(self, ctx: CollectorContext) -> CollectorBatch:
         """Return one batch for every JUnit input reachable from ``ctx``."""
         diagnostics: List[Diagnostic] = []
-        paths = _discover_inputs(ctx)
+        paths = list(
+            discover_artifacts(ctx, "junit", ctx.config.junit)
+        )
         if not paths:
             diagnostics.append(
                 _diagnostic(
@@ -308,29 +280,6 @@ class JunitCollector:
 # Discovery
 
 
-def _discover_inputs(ctx: CollectorContext) -> List[str]:
-    """Return existing input files in deterministic order.
-
-    Explicit ``--junit`` paths win over configured globs. Both are sorted so a
-    run's output does not depend on filesystem enumeration order.
-    """
-    explicit = ctx.explicit_inputs.get("junit", ())
-    if explicit:
-        candidates: Iterable[str] = explicit
-    else:
-        found: List[str] = []
-        for pattern in ctx.config.junit:
-            found.extend(glob.glob(pattern, recursive=True))
-        candidates = found
-
-    resolved = {
-        os.path.abspath(path)
-        for path in candidates
-        if os.path.isfile(path)
-    }
-    return sorted(resolved)
-
-
 # ---------------------------------------------------------------------------
 # Per-file parsing
 
@@ -341,6 +290,8 @@ def _collect_file(
     """Parse one JUnit file. Recoverable problems become diagnostics."""
     diagnostics: List[Diagnostic] = []
     source = relative_path(ctx.repo_root, path)
+    basename = os.path.basename(path)
+    source_tier = infer_tier_from_path(source)
 
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as handle:
@@ -470,13 +421,12 @@ def _collect_file(
             raw_name = _clean(testcase.get("name")) or ""
             name = _GINKGO_PREFIX.sub("", raw_name).strip()
             identity = normalize_test_identity(classname or suite_name, raw_name)
-            file_attr = _normalize_path(_clean(testcase.get("file")) or "")
-            basename = os.path.basename(path)
+            file_attr = normalize_test_path(_clean(testcase.get("file")) or "")
 
             tier = _infer_tier(
                 classname=classname,
                 file_attr=file_attr,
-                source=source,
+                source_tier=source_tier,
                 basename=basename,
             )
             if tier is None:
@@ -643,7 +593,7 @@ def _infer_tier(
     *,
     classname: str,
     file_attr: str,
-    source: str,
+    source_tier: Optional[Tier],
     basename: str,
 ) -> Optional[Tier]:
     """Infer the tier of one testcase, or return ``None`` when unknowable.
@@ -657,7 +607,7 @@ def _infer_tier(
     class_tier = infer_tier_from_path(classname_path) if classname_path else None
     reference_tiers = [
         tier
-        for tier in (infer_tier_from_path(value) for value in (file_attr, source) if value)
+        for tier in (infer_tier_from_path(file_attr), source_tier)
         if tier is not None
     ]
 
@@ -929,15 +879,6 @@ def _truncate(value: Optional[str]) -> str:
         return ""
     collapsed = _WHITESPACE.sub(" ", value).strip()
     return collapsed[:MESSAGE_LIMIT]
-
-
-def _normalize_path(value: str) -> str:
-    if not value:
-        return ""
-    normalized = value.replace("\\", "/")
-    while normalized.startswith("./"):
-        normalized = normalized[2:]
-    return normalized
 
 
 collector = JunitCollector()

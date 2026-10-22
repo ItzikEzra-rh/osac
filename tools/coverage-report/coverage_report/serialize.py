@@ -39,6 +39,20 @@ def canonical_json(value: Any) -> str:
     )
 
 
+def compact_json(value: Any) -> str:
+    """Serialize ``value`` deterministically without whitespace.
+
+    Used for equality comparisons (deduplication), where the human-readable
+    canonical form is unnecessary.
+    """
+    return json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 def canonical_digest(value: Any) -> str:
     """Return the sha256 of the canonical JSON form of ``value``."""
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()

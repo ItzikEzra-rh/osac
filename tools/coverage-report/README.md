@@ -114,7 +114,7 @@ The reviewed link between test-plan cases and tests:
 ```yaml
 version: 1
 feature: OSAC-2540
-reviewed_by: qe-team            # PENDING-REVIEW makes every entry inferred
+reviewed_by: "@qe-team"            # PENDING-REVIEW makes every entry inferred
 behavior_tiers:                 # optional override, wins over the test plan
   TC-FR1-01: integration
 mappings:
@@ -131,9 +131,12 @@ The repository file is `config/mappings/<KEY>.yaml` (relative to the repository
 root); the bundled `tools/coverage-report/config/mappings/<KEY>.yaml` is the
 fallback.
 
-- `reviewed_by` equal to `PENDING-REVIEW`, `pending`, `todo`, `tbd`,
-  `unreviewed`, `none`, or empty makes the file's entries
-  `inferred_mapping`. They are reported but **never** count.
+- `reviewed_by` must be a GitHub user handle (`@name`) or a team (`org/team`
+  or `@org/team`); a bare user name is not accepted. Placeholders (`pending`,
+  `todo`, `tbd`, `unreviewed`, `none`, `n/a`) are compared case- and
+  separator-insensitively, so `PENDING-REVIEW` and `PENDINGREVIEW` both work;
+  `true`/`false`/`yes`/`no` are never reviewers either. Any of these makes the
+  file's entries `inferred_mapping`; they are reported but **never** count.
 - `behavior_tiers` applies even in a `PENDING-REVIEW` file; the behavior then
   records `tier_reviewed: false` and the report counts it as an unreviewed tier
   assignment.

@@ -307,15 +307,29 @@ class TestReviewerValidation(MappingFixture):
         return of_kind(batch, KIND_CONFIG)[0].evidence_class, batch
 
     def test_non_string_and_placeholder_reviewers_are_unreviewed(self):
-        for reviewer in ("[]", "false", "n/a", "pending review", '"PENDING-REVIEW"'):
+        for reviewer in (
+            "[]",
+            "false",
+            "n/a",
+            "pending review",
+            '"PENDING-REVIEW"',
+            "PENDINGREVIEW",
+            "pendingreview",
+            '"false"',
+            '"yes"',
+        ):
             with self.subTest(reviewer=reviewer):
                 evidence_class, _ = self.evidence_class(reviewer)
                 self.assertEqual(
                     evidence_class, EvidenceClass.INFERRED_MAPPING
                 )
 
+    def test_a_bare_user_name_is_not_a_handle(self):
+        evidence_class, _ = self.evidence_class("itzik")
+        self.assertEqual(evidence_class, EvidenceClass.INFERRED_MAPPING)
+
     def test_valid_user_and_team_handles_are_reviewed(self):
-        for reviewer in ('"@itzik"', "osac-project/qe"):
+        for reviewer in ('"@itzik"', "osac-project/qe", '"@osac-project/qe"'):
             with self.subTest(reviewer=reviewer):
                 evidence_class, _ = self.evidence_class(reviewer)
                 self.assertEqual(
@@ -350,7 +364,7 @@ class TestReviewedConfig(MappingFixture):
             record.details["path"], "fulfillment-service/it/it_disk_images_api_test.go"
         )
         self.assertEqual(record.details["name"], "DiskImage API")
-        self.assertEqual(record.details["reviewed_by"], "qe-team")
+        self.assertEqual(record.details["reviewed_by"], "@qe-team")
         self.assertTrue(record.details["test_exists"])
         self.assertTrue(record.id.startswith("ev-"))
 
@@ -439,7 +453,7 @@ class TestReviewedConfig(MappingFixture):
         config = (
             "version: 1\n"
             "feature: OSAC-1111\n"
-            "reviewed_by: qe-team\n"
+            "reviewed_by: \"@qe-team\"\n"
             "mappings:\n"
             "  - behavior: TC-FR1-01\n"
             "    tests:\n"
@@ -619,7 +633,7 @@ class TestHeuristics(MappingFixture):
         config = (
             "version: 1\n"
             "feature: OSAC-1111\n"
-            "reviewed_by: qe-team\n"
+            "reviewed_by: \"@qe-team\"\n"
             "mappings:\n"
             "  - behavior: TC-FR1-01\n"
             "    tests:\n"
