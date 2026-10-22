@@ -22,6 +22,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import TOOL_VERSION
 from .collectors import CollectorContext, builtin, registered  # noqa: F401
+from .collectors.artifacts import discover_artifacts
+from .collectors.behaviors import resolve_testplan_path
 from .mapping_file import mapping_config_path
 from .config import CliOverrides, EffectiveConfig, load_config
 from .diff import build_diff
@@ -81,6 +83,7 @@ from .unit_metrics import (
     MISSING_KIND,
     STATEMENT_WEIGHTED,
     compute_unit_metric,
+    unit_scope_revision,
 )
 
 REPORT_SCHEMA_VERSION = "coverage-report/v1"
@@ -384,7 +387,6 @@ def _alternative_unit_metric(
     records: Sequence[EvidenceRecord],
     *,
     config: EffectiveConfig,
-    sha: str,
 ) -> List[Metric]:
     """Return the other unit metric version, for side-by-side display.
 
@@ -408,7 +410,9 @@ def _alternative_unit_metric(
         records,
         metric_version=alternative,
         expected_packages=len(feature.unit_packages),
-        inventory_revision=sha,
+        inventory_revision=unit_scope_revision(
+            package.package for package in feature.unit_packages
+        ),
     )
     return [outcome.metric]
 
@@ -598,39 +602,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ("coverprofile", path) for path in coverprofiles
         ] + [("junit", path) for path in junit]
 
-        digests: List[Dict[str, object]] = []
-        for kind, path in explicit_inputs:
-            digests.append(
-                input_digest(
-                    kind=kind,
-                    repo_root=repo_root,
-                    path=path,
-                    sha256=file_digest(path),
-                    size_bytes=os.path.getsize(path),
-                )
-            )
-        digests.append(
-            input_digest(
-                kind="features",
+        # Resolve configured globs once. The collectors read these lists and
+        # the digests hash the same set, so the run id cannot miss an input.
+        resolved_inputs: Dict[str, Tuple[str, ...]] = {
+            "coverprofile": discover_artifacts(
+                coverprofiles, config.coverprofiles
+            ),
+            "junit": discover_artifacts(junit, config.junit),
+        }
+
+        digest_entries: Dict[Tuple[str, str], Dict[str, object]] = {}
+
+        def add_digest(kind: str, path: str) -> None:
+            key = (kind, os.path.abspath(path))
+            if key in digest_entries:
+                return
+            digest_entries[key] = input_digest(
+                kind=kind,
                 repo_root=repo_root,
-                path=config.features_file,
-                sha256=file_digest(config.features_file),
-                size_bytes=os.path.getsize(config.features_file),
+                path=path,
+                sha256=file_digest(path),
+                size_bytes=os.path.getsize(path),
             )
-        )
+
+        for kind, paths in sorted(resolved_inputs.items()):
+            for path in paths:
+                add_digest(kind, path)
+        add_digest("features", config.features_file)
         config_digest: Optional[str] = None
         if config.config_path is not None:
             config_digest = file_digest(config.config_path)
-            digests.append(
-                input_digest(
-                    kind="config",
-                    repo_root=repo_root,
-                    path=config.config_path,
-                    sha256=config_digest,
-                    size_bytes=os.path.getsize(config.config_path),
-                )
-            )
-        digests = sorted_input_digests(digests)
+            add_digest("config", config.config_path)
 
         try:
             features, matched_by = resolve_scope(registry, args.feature)
@@ -639,9 +641,41 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 sha=sha,
                 selection={"input": args.feature, "resolved": None},
                 config=config,
-                input_digests=digests,
+                input_digests=sorted_input_digests(
+                    list(digest_entries.values())
+                ),
             )
             return _fail(scope_error, run_id)
+
+        # Test plans and mapping files influence the report; hash the ones the
+        # collectors will actually read. The coverage-note source reads the
+        # integration-testing guide when it exists.
+        bootstrap_ctx = CollectorContext(
+            repo_root=repo_root,
+            sha=sha,
+            features=features,
+            config=config,
+            run_id="unavailable",
+            explicit_inputs={
+                "coverprofile": tuple(coverprofiles),
+                "junit": tuple(junit),
+            },
+            resolved_inputs=resolved_inputs,
+        )
+        for feature in features:
+            testplan = resolve_testplan_path(bootstrap_ctx, feature)
+            if testplan is not None:
+                add_digest("testplan", testplan)
+            mapping_file = mapping_config_path(bootstrap_ctx, feature.key)
+            if mapping_file is not None:
+                add_digest("mapping", mapping_file)
+        integration_doc = os.path.join(
+            repo_root, "docs", "INTEGRATION-TESTING.md"
+        )
+        if os.path.isfile(integration_doc):
+            add_digest("integration-testing-doc", integration_doc)
+
+        digests = sorted_input_digests(list(digest_entries.values()))
 
         resolution = ScopeResolution(
             requested=args.feature,
@@ -668,6 +702,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "coverprofile": tuple(coverprofiles),
                 "junit": tuple(junit),
             },
+            resolved_inputs=resolved_inputs,
         )
         merged, collector_statuses, collector_diagnostics = _collect(
             ctx=ctx,
@@ -739,7 +774,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             metrics_by_key[(feature.key, Tier.UNIT.value)] = unit_metric
 
             alternatives = _alternative_unit_metric(
-                feature, feature_records, config=config, sha=sha
+                feature, feature_records, config=config
             )
 
             behavior_metrics, tier_diagnostics, tier_results = (

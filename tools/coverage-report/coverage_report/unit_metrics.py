@@ -36,8 +36,9 @@ Representation notes:
 
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional, Sequence, Tuple
+from typing import Iterable, Optional, Sequence, Tuple
 
+from .serialize import canonical_digest
 from .model import (
     EvidenceClass,
     EvidenceRecord,
@@ -73,6 +74,15 @@ STATEMENT_WEIGHTED_FORMULA = (
 ALREADY_REPORTED_REASONS = frozenset(
     {"UNIT_PACKAGE_MISSING", "UNIT_EVIDENCE_UNAVAILABLE"}
 )
+
+
+def unit_scope_revision(packages: Iterable[str]) -> str:
+    """Return a stable digest of a feature's unit-package scope.
+
+    Unit evidence is compared across commits; the commit itself is the wrong
+    revision key because a rebuild at another commit does not change the scope.
+    """
+    return canonical_digest(sorted(packages))
 
 
 def percent_of(covered: int, statements: int) -> float:

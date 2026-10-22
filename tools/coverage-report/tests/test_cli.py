@@ -150,7 +150,7 @@ class TestDeterminism(CliTestCase):
         self.assertEqual(manifest["feature_resolution"]["matched_by"], "key")
         self.assertEqual(manifest["generated_at"], "2026-10-22T00:00:00Z")
         kinds = {entry["kind"] for entry in manifest["input_digests"]}
-        self.assertEqual(kinds, {"config", "features"})
+        self.assertEqual(kinds, {"config", "features", "mapping"})
         self.assertRegex(manifest["features_file"]["sha256"], r"^[0-9a-f]{64}$")
 
     def test_run_id_changes_with_sha(self):
@@ -187,6 +187,83 @@ class TestDeterminism(CliTestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("report:", completed.stdout)
+
+
+class TestRunIdInputs(CliTestCase):
+    def _configured_profile(self):
+        Path(self.repo, ".coverage-skill.yaml").write_text(
+            "version: 1\n"
+            "features_file: config/features.yaml\n"
+            "enhancement_roots: []\n"
+            "artifacts:\n"
+            "  coverprofiles:\n"
+            "    - unit.out\n"
+            "  junit: []\n"
+            "output_dir: .artifacts/coverage-report\n",
+            encoding="utf-8",
+        )
+        profile = Path(self.repo, "unit.out")
+        profile.write_text(
+            "mode: set\nexample.com/mod/a.go:1.1,2.2 1 1\n", encoding="utf-8"
+        )
+        return profile
+
+    def test_editing_a_discovered_artifact_changes_run_id_and_comparison(self):
+        profile = self._configured_profile()
+        exit_code, _, stderr = self.run_feature()
+        self.assertEqual(exit_code, 0, stderr)
+        first = self.read_report()
+        kinds = {entry["kind"] for entry in self.read_manifest()["input_digests"]}
+        self.assertIn("coverprofile", kinds)
+
+        profile.write_text(
+            "mode: set\nexample.com/mod/a.go:1.1,2.2 4 0\n", encoding="utf-8"
+        )
+        second_exit, _, second_error = self.run_feature()
+
+        self.assertEqual(second_exit, 0, second_error)
+        second = self.read_report()
+        self.assertNotEqual(second["run_id"], first["run_id"])
+        self.assertTrue(second["comparison"]["has_previous"])
+
+    def test_editing_the_testplan_changes_run_id_and_comparison(self):
+        testplan = Path(self.repo, "docs", "testplan.md")
+        testplan.parent.mkdir(parents=True, exist_ok=True)
+        testplan.write_text(
+            "# Testplan\n\n## Test Cases\n\n### FR-1: One\n\n"
+            "#### TC-FR1-01: First\n\n"
+            "| Tier | Priority | Automation |\n|---|---|---|\n"
+            "| integration | high | automated |\n",
+            encoding="utf-8",
+        )
+        exit_code, _, stderr = self.run_feature()
+        self.assertEqual(exit_code, 0, stderr)
+        first = self.read_report()
+        kinds = {entry["kind"] for entry in self.read_manifest()["input_digests"]}
+        self.assertIn("testplan", kinds)
+
+        testplan.write_text(
+            testplan.read_text(encoding="utf-8").replace("high", "critical"),
+            encoding="utf-8",
+        )
+        second_exit, _, second_error = self.run_feature()
+
+        self.assertEqual(second_exit, 0, second_error)
+        second = self.read_report()
+        self.assertNotEqual(second["run_id"], first["run_id"])
+        self.assertTrue(second["comparison"]["has_previous"])
+
+    def test_absent_testplan_adds_no_digest_and_keeps_the_run_id_stable(self):
+        exit_code, _, stderr = self.run_feature()
+        self.assertEqual(exit_code, 0, stderr)
+        first = self.read_report()
+        kinds = {entry["kind"] for entry in self.read_manifest()["input_digests"]}
+        self.assertNotIn("testplan", kinds)
+
+        second_exit, _, second_error = self.run_feature()
+
+        self.assertEqual(second_exit, 0, second_error)
+        self.assertEqual(self.read_report()["run_id"], first["run_id"])
 
 
 class TestErrorExitCodes(CliTestCase):

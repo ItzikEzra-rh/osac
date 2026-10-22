@@ -1343,7 +1343,8 @@
         "stale_metrics",
         "blocked_metrics",
         "zero_metrics",
-        "tier_unassigned"
+        "tier_unassigned",
+        "missing_inventory_metrics"
       ],
       "properties": {
         "key": {
@@ -1397,6 +1398,12 @@
         "tier_unassigned": {
           "type": "integer",
           "minimum": 0
+        },
+        "missing_inventory_metrics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },

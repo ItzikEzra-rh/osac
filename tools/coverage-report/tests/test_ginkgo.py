@@ -21,6 +21,7 @@ from coverage_report.collectors.ginkgo import (
 )
 from coverage_report.config import EffectiveConfig
 from coverage_report.model import EvidenceClass, Freshness, MetricState, Tier
+from coverage_report.unit_metrics import unit_scope_revision
 from coverage_report.scope import FeatureEntry, UnitPackage, load_registry
 
 SHA = "a" * 40
@@ -308,6 +309,26 @@ class TestDiscovery(unittest.TestCase):
 
         self.assertEqual(batch.metrics[0].state, MetricState.BLOCKED)
         self.assertIsNone(batch.metrics[0].value_percent)
+
+
+class TestUnitScopeRevision(unittest.TestCase):
+    def test_metric_revision_is_the_scope_digest_not_the_commit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = write_profile(tmpdir)
+            ctx = make_ctx(
+                tmpdir,
+                [make_feature("example.com/mod/pkg/alpha")],
+                explicit=[profile],
+                sha="f" * 40,
+            )
+            batch = collect(ctx)
+
+        metric = batch.metrics[0]
+        self.assertEqual(
+            metric.inventory_revision,
+            unit_scope_revision(["example.com/mod/pkg/alpha"]),
+        )
+        self.assertNotEqual(metric.inventory_revision, "f" * 40)
 
 
 class TestProvenance(unittest.TestCase):
@@ -598,7 +619,7 @@ class TestCompatibilityFixture(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             profile = Path(tmpdir, "cover.out")
             profile.write_text(
-                (self.fixture_dir / "cover.out").read_text(encoding="utf-8"),
+                (self.fixture_dir / "coverprofile.txt").read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
             ctx = make_ctx(

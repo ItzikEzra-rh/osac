@@ -10,20 +10,17 @@ import glob
 import os
 from typing import Sequence, Tuple
 
-from . import CollectorContext
-
 
 def discover_artifacts(
-    ctx: CollectorContext, kind: str, patterns: Sequence[str]
+    explicit: Sequence[str], patterns: Sequence[str]
 ) -> Tuple[str, ...]:
-    """Return the artifact paths to read for ``kind``.
+    """Return the artifact paths to read.
 
     Args:
-        ctx: The run context, which carries the explicit inputs.
-        kind: ``junit`` or ``coverprofile`` (the ``explicit_inputs`` key).
+        explicit: Paths passed on the command line. They win over the globs and
+            are kept even when missing so the collector can report them.
         patterns: Configured globs, used only when no explicit path was given.
     """
-    explicit = ctx.explicit_inputs.get(kind, ())
     if explicit:
         return tuple(sorted(os.path.abspath(path) for path in explicit))
 

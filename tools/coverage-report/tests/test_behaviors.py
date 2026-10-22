@@ -202,7 +202,7 @@ class TestTierBullets(TestplanFixtureCase):
         self.assertEqual(first.required_tier, Tier.E2E)
         self.assertEqual(first.required_boundary, ("real",))
         self.assertEqual(second.required_tier, Tier.INTEGRATION)
-        self.assertEqual(second.required_boundary, ("real", "simulated"))
+        self.assertEqual(second.required_boundary, ("real",))
 
 
 class TestAssessability(TestplanFixtureCase):

@@ -67,7 +67,6 @@ from ..model import (
 from ..manifest import relative_path
 from ..sidecar import read_sidecar
 from . import CollectorContext
-from .artifacts import discover_artifacts
 from .behaviors import infer_tier_from_path
 from .mappings import load_mapping_config, mapping_test_entries
 
@@ -212,9 +211,7 @@ class JunitCollector:
     def collect(self, ctx: CollectorContext) -> CollectorBatch:
         """Return one batch for every JUnit input reachable from ``ctx``."""
         diagnostics: List[Diagnostic] = []
-        paths = list(
-            discover_artifacts(ctx, "junit", ctx.config.junit)
-        )
+        paths = list(ctx.resolved_inputs.get("junit", ()))
         if not paths:
             diagnostics.append(
                 _diagnostic(

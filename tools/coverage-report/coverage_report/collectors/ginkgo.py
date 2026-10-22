@@ -47,10 +47,10 @@ from ..unit_metrics import (
     MISSING_KIND,
     MetricOutcome,
     compute_unit_metric,
+    unit_scope_revision,
     percent_of,
 )
 from . import CollectorContext
-from .artifacts import discover_artifacts
 
 #: Collector name used in evidence ids and diagnostics. Registration is owned by
 #: the CLI wiring, not by this module.
@@ -712,7 +712,9 @@ def _empty_batch(
             (),
             metric_version=ctx.config.metric_versions["unit"],
             expected_packages=len(feature.unit_packages),
-            inventory_revision=ctx.sha,
+            inventory_revision=unit_scope_revision(
+                package.package for package in feature.unit_packages
+            ),
         )
         metrics.append(outcome.metric)
         all_diagnostics.append(
@@ -751,9 +753,7 @@ class GinkgoUnitCollector:
         features = tuple(sorted(ctx.features, key=lambda feature: feature.key))
         diagnostics: List[Diagnostic] = []
 
-        paths = discover_artifacts(
-            ctx, "coverprofile", ctx.config.coverprofiles
-        )
+        paths = ctx.resolved_inputs.get("coverprofile", ())
         if not paths:
             return _empty_batch(ctx, features)
 
@@ -848,7 +848,9 @@ class GinkgoUnitCollector:
                 feature_records,
                 metric_version=ctx.config.metric_versions["unit"],
                 expected_packages=len(feature.unit_packages),
-                inventory_revision=ctx.sha,
+                inventory_revision=unit_scope_revision(
+                    package.package for package in feature.unit_packages
+                ),
             )
             metrics.append(outcome.metric)
             metric_diagnostic = _metric_diagnostic(ctx, outcome)

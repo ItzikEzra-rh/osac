@@ -133,6 +133,8 @@ def _readiness(report: Mapping[str, object]) -> List[str]:
         ):
             for tier in entry.get(key) or []:
                 sources.append("{0}: {1}".format(tier, label))
+        for tier in entry.get("missing_inventory_metrics") or []:
+            sources.append("{0}: no test plan".format(tier))
         zero = entry.get("zero_metrics") or []
         lines.append(
             "| {0} | {1} | {2} | {3} | {4} | {5} | {6} |".format(
@@ -223,17 +225,13 @@ def _metric_detail(
                 _cell(breakdown.get("unassessable")),
             )
         )
-    # A unit metric's revision is the commit its profile was produced at; when
-    # the unit metric has no value there is no evidence revision to print.
+    # When the unit metric has no value there is no scope to describe.
     if metric.get("tier") == "unit" and state not in ("value", "zero"):
         return lines
     if metric.get("inventory_revision"):
-        label = (
-            "Evidence revision"
-            if metric.get("tier") == "unit"
-            else "Inventory revision"
+        lines.append(
+            "- Scope revision: `{0}`".format(metric["inventory_revision"])
         )
-        lines.append("- {0}: `{1}`".format(label, metric["inventory_revision"]))
     return lines
 
 

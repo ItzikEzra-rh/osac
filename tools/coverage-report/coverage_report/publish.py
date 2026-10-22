@@ -137,6 +137,7 @@ def publish(
     backup: Optional[str] = None
     moved_backup = False
     swapped = False
+    succeeded = False
     try:
         _write_artifacts(
             working,
@@ -159,15 +160,28 @@ def publish(
         working = ""
         swapped = True
         _check_fault_hook(fault_hook, "after_swap")
+        succeeded = True
     except BaseException as error:
         # Restore the previously published report, if there was one, so a
         # failed publish never leaves a partial or missing output behind.
         if swapped:
             _remove_path(target)
             swapped = False
+        restore_failure: Optional[OSError] = None
         if moved_backup and backup is not None and not os.path.exists(target):
-            os.rename(backup, target)
-            moved_backup = False
+            try:
+                os.rename(backup, target)
+                moved_backup = False
+            except OSError as restore_error:
+                restore_failure = restore_error
+        if restore_failure is not None:
+            raise PublishError(
+                "failed to publish report to {0}: {1}; restoring the previous "
+                "report also failed: {2}".format(target, error, restore_failure),
+                code="PUBLISH_RESTORE_FAILED",
+                recovery="The previous report is preserved at {0}; move it back "
+                "to {1} manually and re-run.".format(backup, target),
+            ) from error
         if isinstance(error, PublishError):
             raise
         raise PublishError(
@@ -179,7 +193,9 @@ def publish(
     finally:
         if working:
             shutil.rmtree(working, ignore_errors=True)
-        if moved_backup and backup is not None:
+        # Keep the backup when the swap did not complete and a restore could
+        # not put it back; deleting it would lose the previous report.
+        if succeeded and moved_backup and backup is not None:
             _remove_path(backup)
 
     return target

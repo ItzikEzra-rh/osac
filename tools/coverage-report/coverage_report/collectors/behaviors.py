@@ -58,7 +58,7 @@ _BULLET_FIELD_RE = re.compile(
     r"^\s*[-*]\s+\*\*(?P<name>[^*]+?)\*\*\s*:?\s*(?P<value>.*)$"
 )
 
-_SIMULATED_TEXT_RE = re.compile(r"simulat|mock|fake|stub|double|omit", re.IGNORECASE)
+_SIMULATED_TEXT_RE = re.compile(r"simulat|mock|fake|stub|double", re.IGNORECASE)
 _REAL_TEXT_RE = re.compile(r"\breal\b|\bdeployed\b|for real", re.IGNORECASE)
 _E2E_TEXT_RE = re.compile(r"\be2e\b|end.to.end", re.IGNORECASE)
 _INTEGRATION_TEXT_RE = re.compile(

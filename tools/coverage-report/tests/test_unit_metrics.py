@@ -12,6 +12,7 @@ from coverage_report.model import (
     Tier,
     make_evidence_id,
 )
+from coverage_report.serialize import canonical_digest
 from coverage_report.unit_metrics import (
     COVERAGE_KIND,
     LEGACY_PACKAGE_AVERAGE,
@@ -19,6 +20,7 @@ from coverage_report.unit_metrics import (
     STATEMENT_WEIGHTED,
     compute_unit_metric,
     percent_of,
+    unit_scope_revision,
 )
 
 FEATURE = "OSAC-1000"
@@ -243,6 +245,22 @@ class TestPercentHelper(unittest.TestCase):
 
     def test_zero_statements_has_no_division_error(self):
         self.assertEqual(percent_of(0, 0), 0.0)
+
+
+class TestUnitScopeRevision(unittest.TestCase):
+    def test_digest_is_order_independent(self):
+        self.assertEqual(
+            unit_scope_revision(["b", "a"]), unit_scope_revision(["a", "b"])
+        )
+        self.assertEqual(
+            unit_scope_revision(["b", "a"]),
+            canonical_digest(["a", "b"]),
+        )
+
+    def test_a_different_scope_changes_the_digest(self):
+        self.assertNotEqual(
+            unit_scope_revision(["a"]), unit_scope_revision(["a", "b"])
+        )
 
 
 if __name__ == "__main__":

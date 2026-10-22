@@ -89,6 +89,12 @@ def _feature_verdict(feature_report: Mapping[str, object]) -> Dict[str, object]:
         if metric.get("state") == MetricState.ZERO.value
     )
     tier_unassigned = int(feature_report.get("tier_unassigned") or 0)
+    missing_inventory = sorted(
+        tier
+        for tier, metric in metrics.items()
+        if metric.get("state") == MetricState.NA.value
+        and metric.get("reason") == "BEHAVIOR_INVENTORY_UNAVAILABLE"
+    )
 
     if tier_unassigned:
         # The denominator is incomplete, so no verdict about readiness can be
@@ -96,7 +102,7 @@ def _feature_verdict(feature_report: Mapping[str, object]) -> Dict[str, object]:
         verdict = VERDICT_INSUFFICIENT
     elif critical or high or zero:
         verdict = VERDICT_NOT_READY
-    elif unavailable or stale or blocked:
+    elif unavailable or stale or blocked or missing_inventory:
         verdict = VERDICT_INSUFFICIENT
     else:
         verdict = VERDICT_READY
@@ -109,6 +115,7 @@ def _feature_verdict(feature_report: Mapping[str, object]) -> Dict[str, object]:
         "gaps": len(gaps),
         "tier_unassigned": tier_unassigned,
         "unavailable_metrics": unavailable,
+        "missing_inventory_metrics": missing_inventory,
         "stale_metrics": stale,
         "blocked_metrics": blocked,
         "zero_metrics": zero,

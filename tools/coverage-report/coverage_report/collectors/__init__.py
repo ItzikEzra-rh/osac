@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Protocol, Tuple, runtime_checkable
 from ..config import EffectiveConfig
 from ..model import CollectorBatch
 from ..scope import FeatureEntry
+from .artifacts import discover_artifacts
 
 
 class CollectorContext:
@@ -35,6 +36,9 @@ class CollectorContext:
         explicit_inputs: Paths passed with ``--coverprofile``/``--junit``,
             keyed by kind. Empty values mean the collector should fall back to
             configured globs.
+        resolved_inputs: Artifact paths resolved once for the run. When omitted
+            they are resolved from ``explicit_inputs`` and the configured
+            globs, so direct collector use keeps working.
     """
 
     def __init__(
@@ -46,6 +50,7 @@ class CollectorContext:
         config: EffectiveConfig,
         run_id: str,
         explicit_inputs: Optional[Dict[str, Tuple[str, ...]]] = None,
+        resolved_inputs: Optional[Dict[str, Tuple[str, ...]]] = None,
     ) -> None:
         self.repo_root = repo_root
         self.sha = sha
@@ -56,6 +61,21 @@ class CollectorContext:
             key: tuple(value)
             for key, value in (explicit_inputs or {}).items()
         }
+        if resolved_inputs is None:
+            self.resolved_inputs: Dict[str, Tuple[str, ...]] = {
+                "coverprofile": discover_artifacts(
+                    self.explicit_inputs.get("coverprofile", ()),
+                    self.config.coverprofiles,
+                ),
+                "junit": discover_artifacts(
+                    self.explicit_inputs.get("junit", ()),
+                    self.config.junit,
+                ),
+            }
+        else:
+            self.resolved_inputs = {
+                kind: tuple(paths) for kind, paths in resolved_inputs.items()
+            }
 
 
 @runtime_checkable

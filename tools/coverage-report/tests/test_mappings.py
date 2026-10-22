@@ -246,6 +246,31 @@ class TestTestplanExecution(MappingFixture):
         self.assertEqual(record.boundary.real, ("Deployed API, PostgreSQL",))
         self.assertEqual(record.boundary.simulated, ("Provider omitted",))
 
+    def test_boundary_bullet_without_a_simulated_segment_is_real_only(self):
+        boundary = (
+            "Deployed Fulfillment and PostgreSQL are real. MCP pod restart is "
+            "real. Providers may be omitted"
+        )
+        _, _, batch = self.build_plan(
+            execution_plan("`{0}`.".format(EXISTING_TEST), boundary=boundary),
+            files={EXISTING_TEST: "package it\n"},
+        )
+
+        record = of_kind(batch, KIND_TESTPLAN_EXECUTION)[0]
+        self.assertEqual(record.boundary.real, (boundary,))
+        self.assertEqual(record.boundary.simulated, ())
+
+    def test_boundary_bullet_explicit_simulated_segment_is_split(self):
+        boundary = "Real: deployed API and PostgreSQL. Simulated: provider"
+        _, _, batch = self.build_plan(
+            execution_plan("`{0}`.".format(EXISTING_TEST), boundary=boundary),
+            files={EXISTING_TEST: "package it\n"},
+        )
+
+        record = of_kind(batch, KIND_TESTPLAN_EXECUTION)[0]
+        self.assertEqual(record.boundary.real, ("deployed API and PostgreSQL",))
+        self.assertEqual(record.boundary.simulated, ("provider",))
+
     def test_execution_command_without_a_path_is_details_only(self):
         _, ctx, batch = self.build_plan(
             execution_plan("`make -C osac-installer test SUITE=fulfillment`.")

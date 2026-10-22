@@ -476,6 +476,43 @@ def _execution_matrix(text: str) -> Dict[str, Dict[str, str]]:
     return rows
 
 
+_SIMULATED_SEGMENT_RE = re.compile(
+    r"(?:^|[.;]\s+|\s)"
+    r"(?:simulated(?:\s+or\s+omitted)?|omitted|faked|mocked)\s*:\s*",
+    re.IGNORECASE,
+)
+_REAL_PREFIX_RE = re.compile(r"^real\s*:\s*", re.IGNORECASE)
+_TRAILING_SEPARATORS = " \t;.,"
+
+
+def _boundary_from_bullet(bullet: str) -> Boundary:
+    """Parse one ``Boundary`` sentence without copying it into both kinds.
+
+    An explicit ``Simulated:`` (or ``simulated or omitted:``) segment splits
+    the sentence. Without one, the sentence describes the real boundary; a
+    trailing "providers may be omitted" is a qualifier, not a simulated
+    boundary. A bullet that names only a simulated dependency is simulated.
+    """
+    text = " ".join((bullet or "").split()).strip().rstrip(".")
+    if not text:
+        return Boundary()
+
+    match = _SIMULATED_SEGMENT_RE.search(text)
+    if match is not None:
+        real_text = text[: match.start()].strip(_TRAILING_SEPARATORS)
+        real_text = _REAL_PREFIX_RE.sub("", real_text).strip()
+        simulated_text = text[match.end() :].strip(_TRAILING_SEPARATORS)
+        return Boundary(
+            real=(real_text,) if real_text else (),
+            simulated=(simulated_text,) if simulated_text else (),
+        )
+
+    kinds = _boundary_kinds(text)
+    if "simulated" in kinds and "real" not in kinds:
+        return Boundary(simulated=(text,))
+    return Boundary(real=(text,))
+
+
 def _dependency(value: str) -> Tuple[str, ...]:
     text = " ".join((value or "").split()).strip().rstrip(".")
     if text.casefold() in _EMPTY_DEPENDENCIES:
@@ -491,13 +528,7 @@ def _case_boundary(fields: Dict[str, str], row: Optional[Dict[str, str]]) -> Bou
         if real or simulated:
             return Boundary(real=real, simulated=simulated)
 
-    bullet = fields.get("boundary")
-    kinds = _boundary_kinds(bullet)
-    text = " ".join((bullet or "").split()).strip().rstrip(".")
-    return Boundary(
-        real=(text,) if "real" in kinds and text else (),
-        simulated=(text,) if "simulated" in kinds and text else (),
-    )
+    return _boundary_from_bullet(fields.get("boundary", ""))
 
 
 def _testplan_records(

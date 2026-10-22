@@ -14,7 +14,7 @@ from coverage_report.cli import main
 from coverage_report.collectors import clear, register
 from coverage_report.collectors.builtin import BUILTIN_COLLECTORS
 
-from coverage_report.render_md import _cell
+from coverage_report.render_md import _cell, render_markdown
 from coverage_report.report import build_summary
 
 import schema_check
@@ -890,7 +890,7 @@ class TestMarkdownEscaping(unittest.TestCase):
 
 
 class TestSummaryPolicy(unittest.TestCase):
-    def summary(self, *, tier_unassigned=0, behaviors=()):
+    def summary(self, *, tier_unassigned=0, behaviors=(), metrics=None):
         feature = {
             "key": "OSAC-1111",
             "tier_unassigned": tier_unassigned,
@@ -902,6 +902,7 @@ class TestSummaryPolicy(unittest.TestCase):
             "behaviors": list(behaviors),
             "gaps": [],
         }
+        feature["tiers"].update(metrics or {})
         return build_summary(
             feature_reports=[feature],
             metric_versions={
@@ -913,6 +914,88 @@ class TestSummaryPolicy(unittest.TestCase):
             require_execution=False,
             unit_low_coverage_percent=50,
         )
+
+    def test_missing_test_plan_is_insufficient_evidence(self):
+        summary = self.summary(
+            metrics={
+                "integration": {
+                    "state": "na",
+                    "reason": "BEHAVIOR_INVENTORY_UNAVAILABLE",
+                },
+                "e2e": {
+                    "state": "na",
+                    "reason": "BEHAVIOR_INVENTORY_UNAVAILABLE",
+                },
+            }
+        )
+
+        entry = summary["features"][0]
+        self.assertEqual(entry["verdict"], "insufficient evidence")
+        self.assertEqual(
+            entry["missing_inventory_metrics"], ["e2e", "integration"]
+        )
+
+        report = {
+            "run_id": "run-0000000000000000",
+            "tool_version": "test",
+            "generated_at": "2026-10-22T00:00:00Z",
+            "repo": {"sha": "a" * 40, "sha_source": "cli"},
+            "summary": summary,
+            "features": [
+                {
+                    "key": "OSAC-1111",
+                    "name": "one",
+                    "tiers": {
+                        "unit": {"state": "value"},
+                        "integration": {
+                            "state": "na",
+                            "reason": "BEHAVIOR_INVENTORY_UNAVAILABLE",
+                        },
+                        "e2e": {
+                            "state": "na",
+                            "reason": "BEHAVIOR_INVENTORY_UNAVAILABLE",
+                        },
+                    },
+                    "alternative_metrics": [],
+                    "inventories": [],
+                    "denominator_breakdown": {
+                        "unit": {},
+                        "integration": {},
+                        "e2e": {},
+                    },
+                    "behaviors": [],
+                    "gaps": [],
+                    "behavior_counts": {},
+                    "unassessable_by_tier": {},
+                    "unit_behaviors": 0,
+                }
+            ],
+            "evidence": [],
+            "diagnostics": [],
+            "inventories": [],
+            "gaps": [],
+            "behaviors": [],
+            "comparison": {"has_previous": False},
+        }
+        self.assertIn("integration: no test plan", render_markdown(report))
+
+    def test_empty_tier_denominator_stays_ready_eligible(self):
+        summary = self.summary(
+            metrics={
+                "integration": {
+                    "state": "na",
+                    "reason": "BEHAVIOR_METRIC_NO_DENOMINATOR",
+                },
+                "e2e": {
+                    "state": "na",
+                    "reason": "BEHAVIOR_METRIC_NO_DENOMINATOR",
+                },
+            }
+        )
+
+        entry = summary["features"][0]
+        self.assertEqual(entry["verdict"], "ready")
+        self.assertEqual(entry["missing_inventory_metrics"], [])
 
     def test_unassigned_behaviors_make_the_verdict_insufficient_evidence(self):
         summary = self.summary(tier_unassigned=2)

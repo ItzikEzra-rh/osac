@@ -1,5 +1,5 @@
 {
-  "profile": "tests/fixtures/ginkgo/cover.out",
+  "profile": "tests/fixtures/ginkgo/coverprofile.txt",
   "features": {
     "OSAC-1000": {
       "packages": {
