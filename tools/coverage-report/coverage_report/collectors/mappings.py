@@ -35,6 +35,7 @@ import yaml
 from ..errors import CoverageReportError
 from ..manifest import relative_path
 from ..model import Boundary, CollectorBatch, Diagnostic, EvidenceClass, EvidenceRecord, Tier, make_evidence_id
+from ..review import is_invalid_reviewer, is_reviewed
 from . import CollectorContext
 from .behaviors import (
     TestplanInventory,
@@ -100,10 +101,6 @@ _NOT_TEST_DIRS = frozenset(
     }
 )
 _EMPTY_DEPENDENCIES = frozenset({"", "none", "n/a", "na", "-", "omitted"})
-
-_UNREVIEWED_MARKERS = frozenset(
-    {"", "pending-review", "pending", "todo", "tbd", "unreviewed", "none"}
-)
 
 _INTEGRATION_DOC = "docs/INTEGRATION-TESTING.md"
 
@@ -208,10 +205,6 @@ def _diagnostic(
     )
 
 
-def _is_reviewed(value: object) -> bool:
-    return str(value if value is not None else "").strip().casefold() not in _UNREVIEWED_MARKERS
-
-
 def _suite_tier_for_path(feature, path: str) -> Optional[Tier]:
     """Return the feature's declared suite tier that contains ``path``."""
     normalized = path.replace(os.sep, "/").strip("/") + "/"
@@ -243,8 +236,17 @@ def _iter_test_files(ctx: CollectorContext, feature) -> Tuple[str, ...]:
         for directory in feature.suites[tier_name]:
             roots.add(os.path.normpath(os.path.join(ctx.repo_root, directory)))
 
-    found: Set[str] = set()
+    deduped_roots: List[str] = []
     for root in sorted(roots):
+        if any(
+            root == parent or root.startswith(parent + os.sep)
+            for parent in deduped_roots
+        ):
+            continue
+        deduped_roots.append(root)
+
+    found: Set[str] = set()
+    for root in deduped_roots:
         if not os.path.isdir(root):
             continue
         for current, dirnames, filenames in os.walk(root):
@@ -257,6 +259,24 @@ def _iter_test_files(ctx: CollectorContext, feature) -> Tuple[str, ...]:
                 absolute = os.path.join(current, filename)
                 found.add(relative_path(ctx.repo_root, absolute))
     return tuple(sorted(found))
+
+
+def _read_test_files(
+    ctx: CollectorContext, feature
+) -> Tuple[Tuple[str, ...], Dict[str, str], Dict[str, OSError]]:
+    """Walk the feature's suite roots once and read each file once."""
+    paths = _iter_test_files(ctx, feature)
+    texts: Dict[str, str] = {}
+    errors: Dict[str, OSError] = {}
+    for path in paths:
+        try:
+            with open(
+                os.path.join(ctx.repo_root, path), "r", encoding="utf-8"
+            ) as handle:
+                texts[path] = handle.read()
+        except OSError as error:
+            errors[path] = error
+    return paths, texts, errors
 
 
 def _anchor_patterns(feature) -> Tuple[re.Pattern[str], ...]:
@@ -664,7 +684,38 @@ def _parse_mapping_tests(
     return tests
 
 
-def _load_mapping_config(
+def mapping_test_entries(data: object) -> List[Dict[str, str]]:
+    """Return ``mappings[].tests[]`` entries as path/name dictionaries.
+
+    Shared with the JUnit collector so mapping files are parsed in one place.
+    """
+    if not isinstance(data, dict):
+        return []
+    entries = data.get("mappings")
+    if not isinstance(entries, list):
+        return []
+    result: List[Dict[str, str]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        raw_tests = entry.get("tests")
+        if not isinstance(raw_tests, list):
+            continue
+        for raw in raw_tests:
+            if not isinstance(raw, dict):
+                continue
+            # Attribution accepts a name-only entry; the mapping collector
+            # separately requires a path before it can emit evidence.
+            path = raw.get("path")
+            name = raw.get("name")
+            path_text = path.strip() if isinstance(path, str) else ""
+            name_text = name.strip() if isinstance(name, str) else ""
+            if path_text or name_text:
+                result.append({"path": path_text, "name": name_text})
+    return result
+
+
+def load_mapping_config(
     ctx: CollectorContext,
     feature,
     *,
@@ -744,6 +795,21 @@ def _load_mapping_config(
         )
         return None
 
+    if is_invalid_reviewer(data.get("reviewed_by")):
+        diagnostics.append(
+            _diagnostic(
+                ctx,
+                code="MAPPING_REVIEWER_INVALID",
+                message="mapping file {0} has an invalid reviewed_by value {1!r}; "
+                "its entries are treated as unreviewed".format(
+                    display, data.get("reviewed_by")
+                ),
+                severity="warning",
+                recovery="Use a GitHub user or team handle such as @itzik or "
+                "osac-project/qe, or PENDING-REVIEW.",
+            )
+        )
+
     data["_path"] = display
     return data
 
@@ -755,13 +821,13 @@ def _config_records(
     *,
     diagnostics: List[Diagnostic],
 ) -> List[EvidenceRecord]:
-    data = _load_mapping_config(ctx, feature, diagnostics=diagnostics)
+    data = load_mapping_config(ctx, feature, diagnostics=diagnostics)
     if data is None:
         return []
 
     display = str(data["_path"])
     reviewed_by = data.get("reviewed_by")
-    reviewed = _is_reviewed(reviewed_by)
+    reviewed = is_reviewed(reviewed_by)
     known = {behavior.id for behavior in inventory.behaviors}
 
     records: List[EvidenceRecord] = []
@@ -945,18 +1011,19 @@ def _test_reference_records(
     feature,
     inventory: TestplanInventory,
     *,
+    test_files: Sequence[str],
+    texts: Dict[str, str],
+    read_errors: Dict[str, OSError],
     diagnostics: List[Diagnostic],
 ) -> List[EvidenceRecord]:
     known = {behavior.id.split("/", 1)[-1]: behavior.id for behavior in inventory.behaviors}
     patterns = _anchor_patterns(feature)
     records: List[EvidenceRecord] = []
 
-    for path in _iter_test_files(ctx, feature):
+    for path in test_files:
         tier = _tier_for_path(feature, path)
-        try:
-            with open(os.path.join(ctx.repo_root, path), "r", encoding="utf-8") as handle:
-                text = handle.read()
-        except OSError as error:
+        if path in read_errors:
+            error = read_errors[path]
             diagnostics.append(
                 _diagnostic(
                     ctx,
@@ -966,6 +1033,9 @@ def _test_reference_records(
                     recovery="Check file permissions.",
                 )
             )
+            continue
+        text = texts.get(path)
+        if text is None:
             continue
         if tier is None:
             continue
@@ -1235,6 +1305,8 @@ def _keyword_records(
     feature,
     inventory: TestplanInventory,
     *,
+    test_files: Sequence[str],
+    texts: Dict[str, str],
     covered_paths: Set[Tuple[str, str]],
     diagnostics: List[Diagnostic],
 ) -> List[EvidenceRecord]:
@@ -1246,14 +1318,12 @@ def _keyword_records(
         behavior.id: _tokens(behavior.title) for behavior in behaviors
     }
 
-    for path in _iter_test_files(ctx, feature):
+    for path in test_files:
         tier = _tier_for_path(feature, path)
         if tier is None:
             continue
-        try:
-            with open(os.path.join(ctx.repo_root, path), "r", encoding="utf-8") as handle:
-                text = handle.read()
-        except OSError:
+        text = texts.get(path)
+        if text is None:
             continue
 
         stem = os.path.splitext(os.path.basename(path))[0]
@@ -1391,6 +1461,8 @@ class TestMappingCollector:
                 # INVENTORY_NO_TEST_CASES; there is no subject to map to.
                 continue
 
+            test_files, texts, read_errors = _read_test_files(ctx, feature)
+
             testplan_records = _testplan_records(
                 ctx, feature, inventory, diagnostics=diagnostics
             )
@@ -1402,7 +1474,13 @@ class TestMappingCollector:
             records.extend(config_records)
 
             reference_records = _test_reference_records(
-                ctx, feature, inventory, diagnostics=diagnostics
+                ctx,
+                feature,
+                inventory,
+                test_files=test_files,
+                texts=texts,
+                read_errors=read_errors,
+                diagnostics=diagnostics,
             )
             records.extend(reference_records)
 
@@ -1425,6 +1503,8 @@ class TestMappingCollector:
                     ctx,
                     feature,
                     inventory,
+                    test_files=test_files,
+                    texts=texts,
                     covered_paths=covered,
                     diagnostics=diagnostics,
                 )

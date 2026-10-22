@@ -190,13 +190,15 @@ def _split_cases(text: str) -> List[_RawCase]:
     in_test_cases = not has_test_cases_section
     requirement_heading: Optional[str] = None
     current: Optional[_RawCase] = None
+    current_lines: List[str] = []
     cases: List[_RawCase] = []
 
     def close_current() -> None:
-        nonlocal current
+        nonlocal current, current_lines
         if current is not None:
-            cases.append(current)
+            cases.append(replace(current, lines=tuple(current_lines)))
             current = None
+            current_lines = []
 
     for index, line in enumerate(lines):
         heading = _HEADING_RE.match(line)
@@ -219,6 +221,7 @@ def _split_cases(text: str) -> List[_RawCase]:
             token = _TC_HEADING_PREFIX_RE.match(heading_text)
             if token:
                 close_current()
+                current_lines = []
                 current = _RawCase(
                     tc_id=token.group(1),
                     title=_title_after(heading_text, token.group(1)),
@@ -229,7 +232,7 @@ def _split_cases(text: str) -> List[_RawCase]:
             continue
 
         if current is not None:
-            current = replace(current, lines=current.lines + (line,))
+            current_lines.append(line)
 
     close_current()
     return cases

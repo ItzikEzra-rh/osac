@@ -42,7 +42,6 @@ def make_feature(**overrides) -> FeatureEntry:
         "components": (),
         "unit_packages": (),
         "suites": {},
-        "extras": {},
     }
     values.update(overrides)
     return FeatureEntry(**values)

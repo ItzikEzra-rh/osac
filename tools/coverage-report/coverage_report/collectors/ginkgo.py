@@ -24,12 +24,13 @@ evidence ``current``; a different one makes it ``stale``; a missing revision is
 """
 
 import glob
-import json
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+from ..manifest import relative_path
+from ..sidecar import read_sidecar
 from ..model import (
     CollectorBatch,
     Diagnostic,
@@ -206,27 +207,6 @@ class _MergedPackage:
     freshness: Freshness
 
 
-def _posix(path: str) -> str:
-    return path.replace(os.sep, "/")
-
-
-def _repo_relative(repo_root: str, path: str) -> str:
-    """Return ``path`` relative to the repository, using forward slashes.
-
-    A path outside the repository (for example a profile passed from ``/tmp``)
-    stays absolute: a ``../..`` source would be less useful in the report than
-    the real location.
-    """
-    absolute = os.path.abspath(path)
-    try:
-        relative = os.path.relpath(absolute, repo_root)
-    except ValueError:  # different drives on Windows
-        return _posix(absolute)
-    if relative == os.pardir or relative.startswith(os.pardir + os.sep):
-        return _posix(absolute)
-    return _posix(relative)
-
-
 def parse_coverprofile(
     text: str, *, source: str
 ) -> Tuple[Optional[str], Mapping[str, PackageCoverage], Tuple[ParseIssue, ...]]:
@@ -375,45 +355,16 @@ def _aggregate_packages(blocks: Iterable[_Block]) -> Dict[str, PackageCoverage]:
     return result
 
 
-def _revision_freshness(revision: Optional[str], sha: str) -> Freshness:
-    """Classify a sidecar revision against the reported commit.
-
-    Kept as a thin alias so callers and tests have one import, while the rule
-    itself lives in :func:`coverage_report.model.revision_freshness`.
-    """
-    return revision_freshness(revision, sha)
-
-
 def _read_sidecar(
     profile_path: str, *, source: str
 ) -> Tuple[Optional[Mapping[str, object]], Tuple[ParseIssue, ...]]:
-    """Read ``<profile>.meta.json`` if present."""
-    meta_path = profile_path + META_SUFFIX
-    if not os.path.isfile(meta_path):
-        return None, ()
-    try:
-        with open(meta_path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError) as error:
+    """Read ``<profile>.meta.json`` with the shared sidecar reader."""
+    data, error = read_sidecar(profile_path)
+    if error:
         return None, (
             ParseIssue(
                 code="UNIT_META_MALFORMED",
-                message=(
-                    "{0}{1}: could not read sidecar metadata: {2}".format(
-                        source, META_SUFFIX, error
-                    )
-                ),
-            ),
-        )
-    if not isinstance(data, dict):
-        return None, (
-            ParseIssue(
-                code="UNIT_META_MALFORMED",
-                message=(
-                    "{0}{1}: sidecar metadata must be a JSON object".format(
-                        source, META_SUFFIX
-                    )
-                ),
+                message="{0}{1}: {2}".format(source, META_SUFFIX, error),
             ),
         )
     return data, ()
@@ -450,7 +401,7 @@ def _read_profile(
     ctx: CollectorContext, path: str
 ) -> ProfileCoverage:
     """Read and parse one coverprofile, attaching provenance."""
-    source = _repo_relative(ctx.repo_root, path)
+    source = relative_path(ctx.repo_root, path)
     issues: List[ParseIssue] = []
 
     try:
@@ -491,7 +442,7 @@ def _read_profile(
         revision=revision,
         command=_sidecar_string(sidecar, "command"),
         generated_at=_sidecar_string(sidecar, "generated_at"),
-        freshness=_revision_freshness(revision, ctx.sha),
+        freshness=revision_freshness(revision, ctx.sha),
         packages=packages,
         issues=tuple(issues),
         blocks=blocks,
@@ -701,11 +652,12 @@ def _feature_records(
     records: List[EvidenceRecord] = []
     diagnostics: List[Diagnostic] = []
 
+    ordered_packages = sorted(merged)
     for unit_package in feature.unit_packages:
         pattern = unit_package.package
         matched = [
             merged[package]
-            for package in sorted(merged)
+            for package in ordered_packages
             if _package_matches(pattern, package)
         ]
         if not matched:

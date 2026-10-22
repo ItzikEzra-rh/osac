@@ -13,10 +13,11 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+from .config import expect_mapping, expect_string_list
 from .errors import ConfigError, RepoError, ScopeError
 from .model import TIER_ORDER
 
@@ -32,17 +33,10 @@ class UnitPackage:
     package: str
     rationale: str = ""
 
-    def to_dict(self) -> Dict[str, str]:
-        return {"package": self.package, "rationale": self.rationale}
-
 
 @dataclass(frozen=True)
 class FeatureEntry:
-    """One feature from ``config/features.yaml``.
-
-    Unknown keys are preserved in ``extras`` so a later wave can add fields
-    without breaking W0's parser.
-    """
+    """One feature from ``config/features.yaml``."""
 
     key: str
     name: str
@@ -51,22 +45,6 @@ class FeatureEntry:
     components: Tuple[str, ...] = ()
     unit_packages: Tuple[UnitPackage, ...] = ()
     suites: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
-    extras: Dict[str, object] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, object]:
-        return {
-            "key": self.key,
-            "name": self.name,
-            "aliases": list(self.aliases),
-            "testplan": self.testplan,
-            "components": list(self.components),
-            "unit_packages": [package.to_dict() for package in self.unit_packages],
-            "suites": {
-                tier: list(self.suites.get(tier, ()))
-                for tier in sorted(self.suites)
-            },
-            "extras": dict(self.extras),
-        }
 
 
 @dataclass(frozen=True)
@@ -109,26 +87,6 @@ class ScopeResolution:
             "sha": self.sha,
             "sha_source": self.sha_source,
         }
-
-
-def _expect_mapping(value: object, field: str) -> Mapping[object, object]:
-    if not isinstance(value, dict):
-        raise ConfigError(
-            "field {0} must be a mapping".format(field),
-            field=field,
-            recovery="Fix the structure of the feature registry.",
-        )
-    return value
-
-
-def _expect_string_list(value: object, field: str) -> Tuple[str, ...]:
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ConfigError(
-            "field {0} must be a list of strings".format(field),
-            field=field,
-            recovery="Use a YAML list, for example [].",
-        )
-    return tuple(value)
 
 
 def _parse_unit_packages(value: object, field: str) -> Tuple[UnitPackage, ...]:
@@ -177,7 +135,9 @@ def _parse_unit_packages(value: object, field: str) -> Tuple[UnitPackage, ...]:
 
 
 def _parse_suites(value: object, field: str) -> Dict[str, Tuple[str, ...]]:
-    mapping = _expect_mapping(value, field)
+    mapping = expect_mapping(
+        value, field, recovery="Fix the structure of the feature registry."
+    )
     unknown = sorted(set(mapping) - _SUITE_TIERS)
     if unknown:
         raise ConfigError(
@@ -187,25 +147,16 @@ def _parse_suites(value: object, field: str) -> Dict[str, Tuple[str, ...]]:
             recovery="Allowed suite tiers are unit, integration, e2e.",
         )
     return {
-        str(tier): _expect_string_list(
-            mapping[tier], "{0}.{1}".format(field, tier)
+        str(tier): tuple(
+            expect_string_list(
+                mapping[tier],
+                "{0}.{1}".format(field, tier),
+                recovery="Use a YAML list, for example [].",
+            )
         )
         for tier in sorted(mapping)
     }
 
-
-_KNOWN_FEATURE_KEYS = frozenset(
-    {
-        "key",
-        "name",
-        "aliases",
-        "testplan",
-        "components",
-        "unit_packages",
-        "suites",
-        "rationale",
-    }
-)
 
 
 def load_registry(path: str) -> FeatureRegistry:
@@ -266,7 +217,11 @@ def load_registry(path: str) -> FeatureRegistry:
     seen_keys: Dict[str, int] = {}
     for index, raw_feature in enumerate(raw_features):
         field_name = "features[{0}]".format(index)
-        entry = _expect_mapping(raw_feature, field_name)
+        entry = expect_mapping(
+            raw_feature,
+            field_name,
+            recovery="Fix the structure of the feature registry.",
+        )
         key = entry.get("key")
         if not isinstance(key, str) or not key:
             raise ConfigError(
@@ -294,11 +249,19 @@ def load_registry(path: str) -> FeatureRegistry:
                 recovery="Use a short lowercase feature name, for example disk-image.",
             )
 
-        aliases = _expect_string_list(
-            entry.get("aliases", []), "{0}.aliases".format(field_name)
+        aliases = tuple(
+            expect_string_list(
+                entry.get("aliases", []),
+                "{0}.aliases".format(field_name),
+                recovery="Use a YAML list, for example [].",
+            )
         )
-        components = _expect_string_list(
-            entry.get("components", []), "{0}.components".format(field_name)
+        components = tuple(
+            expect_string_list(
+                entry.get("components", []),
+                "{0}.components".format(field_name),
+                recovery="Use a YAML list, for example [].",
+            )
         )
         testplan = entry.get("testplan")
         if testplan is not None and not isinstance(testplan, str):
@@ -329,10 +292,6 @@ def load_registry(path: str) -> FeatureRegistry:
                 suites=_parse_suites(
                     entry.get("suites", {}), "{0}.suites".format(field_name)
                 ),
-                extras={
-                    str(extra_key): entry[extra_key]
-                    for extra_key in sorted(set(entry) - _KNOWN_FEATURE_KEYS)
-                },
             )
         )
 

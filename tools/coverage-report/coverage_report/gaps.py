@@ -108,6 +108,14 @@ def _candidates(
     )
 
 
+def _assessment_records(
+    evidence_ids: Sequence[str],
+    index: Mapping[str, EvidenceRecord],
+) -> List[EvidenceRecord]:
+    """Return the assessment's records from a prebuilt index, in id order."""
+    return [index[evidence_id] for evidence_id in evidence_ids if evidence_id in index]
+
+
 def _next_action(
     *,
     feature: str,
@@ -115,7 +123,8 @@ def _next_action(
     tier: Tier,
     reason: str,
     assessment: BehaviorAssessment,
-    records: Sequence[EvidenceRecord],
+    evidence: Sequence[EvidenceRecord],
+    candidates: Sequence[EvidenceRecord],
 ) -> str:
     config = "config/mappings/{0}.yaml".format(feature)
     if reason == REASON_NO_MAPPING:
@@ -124,28 +133,14 @@ def _next_action(
             "that exists.".format(behavior_id, tier.value, config)
         )
     if reason == REASON_INFERRED_ONLY:
-        sources = ", ".join(
-            sorted(
-                {
-                    record.source
-                    for record in records
-                    if record.id in set(assessment.candidate_ids)
-                }
-            )
-        )
+        sources = ", ".join(sorted({record.source for record in candidates}))
         return (
             "Review the inferred mapping(s) for {0} ({1}) and record the "
             "reviewer in {2}.".format(behavior_id, sources or "no source", config)
         )
     if reason == REASON_WRONG_TIER:
         tiers = ", ".join(
-            sorted(
-                {
-                    record.tier.value
-                    for record in records
-                    if record.id in set(assessment.evidence_ids)
-                }
-            )
+            sorted({record.tier.value for record in evidence})
         )
         return (
             "Map {0} at {1}; its reviewed mapping is at {2} instead, and a "
@@ -166,8 +161,7 @@ def _next_action(
         paths = sorted(
             {
                 str((record.details or {}).get("path", ""))
-                for record in records
-                if record.id in set(assessment.evidence_ids)
+                for record in evidence
             }
             - {""}
         )
@@ -179,8 +173,7 @@ def _next_action(
             sorted(
                 {
                     str((record.details or {}).get("path", ""))
-                    for record in records
-                    if record.id in set(assessment.evidence_ids)
+                    for record in evidence
                 }
             )
         )
@@ -212,6 +205,8 @@ def behavior_gaps(
         if assessment.status != STATUS_GAP:
             continue
         behavior = assessment.behavior
+        evidence = _assessment_records(assessment.evidence_ids, index)
+        candidates = _assessment_records(assessment.candidate_ids, index)
         gaps.append(
             {
                 "feature": feature,
@@ -230,7 +225,8 @@ def behavior_gaps(
                     tier=tier,
                     reason=assessment.reason,
                     assessment=assessment,
-                    records=records,
+                    evidence=evidence,
+                    candidates=candidates,
                 ),
             }
         )

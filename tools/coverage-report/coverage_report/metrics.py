@@ -28,6 +28,7 @@ Nothing here reads a file, the clock, or the network.
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from .collectors.junit import execution_match_keys, match_key, normalize_test_path
 from .collectors.mappings import KIND_MISSING_TEST, KIND_PLANNED_MISSING
 from .model import (
     Behavior,
@@ -75,17 +76,6 @@ OUTCOME_FAILED = "failed"
 OUTCOME_SKIPPED = "skipped"
 
 _OPERATION = "compute_metrics"
-
-
-def _collapse(value: str) -> str:
-    return " ".join((value or "").split()).casefold()
-
-
-def _normalize_path(value: str) -> str:
-    text = (value or "").replace("\\", "/")
-    while text.startswith("./"):
-        text = text[2:]
-    return text.strip("/").casefold()
 
 
 @dataclass(frozen=True)
@@ -183,50 +173,92 @@ def _mapping_path(record: EvidenceRecord) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _execution_matches(
-    mapping: EvidenceRecord, execution: EvidenceRecord
-) -> bool:
-    """Join a mapping to an execution with the shared identity rules.
+@dataclass(frozen=True)
+class _ExecutionIndex:
+    """Execution records indexed by the keys a mapping can match."""
 
-    A mapped test name matches the execution's name, its full identity, or the
-    suite prefix of its identity (a mapping recorded at Describe granularity
-    covers every spec in that suite). When the mapping has no name, the file
-    path is the join key. When it has a name, a path alone is not accepted: that
-    would attach any passing spec in the same file to the behavior.
-    """
-    mapped_name = _mapping_name(mapping)
-    if mapped_name:
-        target = _collapse(mapped_name)
-        identity = _collapse(execution.subject)
-        name = _collapse(execution.subject.rsplit("::", 1)[-1])
-        if target in (identity, name):
-            return True
-        return identity.startswith(target + "::")
+    by_identity: Dict[str, Tuple[EvidenceRecord, ...]]
+    by_name: Dict[str, Tuple[EvidenceRecord, ...]]
+    by_prefix: Dict[str, Tuple[EvidenceRecord, ...]]
+    by_path: Dict[str, Tuple[EvidenceRecord, ...]]
 
-    mapped_path = _normalize_path(_mapping_path(mapping))
-    if not mapped_path:
-        return False
-    execution_path = _normalize_path(
-        str((execution.details or {}).get("file", ""))
-    )
-    if execution_path:
-        return execution_path == mapped_path or execution_path.endswith(
-            "/" + mapped_path
+
+def _add_index(
+    table: Dict[str, List[EvidenceRecord]],
+    key: str,
+    record: EvidenceRecord,
+) -> None:
+    if key:
+        table.setdefault(key, []).append(record)
+
+
+def _freeze_index(
+    table: Dict[str, List[EvidenceRecord]]
+) -> Dict[str, Tuple[EvidenceRecord, ...]]:
+    return {
+        key: tuple({record.id: record for record in records}.values())
+        for key, records in table.items()
+    }
+
+
+def _build_execution_index(
+    executions: Sequence[EvidenceRecord],
+) -> _ExecutionIndex:
+    """Normalize each execution record once, then index it for lookup."""
+    by_identity: Dict[str, List[EvidenceRecord]] = {}
+    by_name: Dict[str, List[EvidenceRecord]] = {}
+    by_prefix: Dict[str, List[EvidenceRecord]] = {}
+    by_path: Dict[str, List[EvidenceRecord]] = {}
+
+    for record in executions:
+        details = record.details or {}
+        keys = execution_match_keys(
+            record.subject,
+            str(details.get("file", "")),
+            record.source,
         )
-    source = _normalize_path(execution.source)
-    return source == mapped_path or source.endswith("/" + mapped_path)
+        _add_index(by_identity, keys.identity, record)
+        _add_index(by_name, keys.name, record)
+        for prefix in keys.prefixes:
+            _add_index(by_prefix, prefix, record)
+        for suffix in keys.path_suffixes:
+            _add_index(by_path, suffix, record)
+
+    return _ExecutionIndex(
+        by_identity=_freeze_index(by_identity),
+        by_name=_freeze_index(by_name),
+        by_prefix=_freeze_index(by_prefix),
+        by_path=_freeze_index(by_path),
+    )
+
+
+def _matching_executions(
+    mapping: EvidenceRecord, index: _ExecutionIndex
+) -> Tuple[EvidenceRecord, ...]:
+    """Return the executions a mapping joins, using index lookups only."""
+    mapped_name = match_key(_mapping_name(mapping))
+    if mapped_name:
+        candidates = (
+            index.by_identity.get(mapped_name, ())
+            + index.by_name.get(mapped_name, ())
+            + index.by_prefix.get(mapped_name, ())
+        )
+    else:
+        mapped_path = normalize_test_path(_mapping_path(mapping))
+        candidates = index.by_path.get(mapped_path, ()) if mapped_path else ()
+    return tuple({record.id: record for record in candidates}.values())
 
 
 def _execution_status(
     mappings: Sequence[EvidenceRecord],
-    executions: Sequence[EvidenceRecord],
+    index: _ExecutionIndex,
 ) -> str:
     """Return the aggregate execution status for a behavior's mappings."""
     if not mappings:
         return EXECUTION_UNKNOWN
     matched: Dict[str, EvidenceRecord] = {}
-    for execution in executions:
-        if any(_execution_matches(mapping, execution) for mapping in mappings):
+    for mapping in mappings:
+        for execution in _matching_executions(mapping, index):
             matched[execution.id] = execution
     if not matched:
         return NOT_EXECUTED
@@ -256,7 +288,7 @@ def _assess(
     tier: Tier,
     records: Sequence[EvidenceRecord],
     *,
-    executions: Sequence[EvidenceRecord],
+    execution_index: _ExecutionIndex,
     require_execution: bool,
 ) -> BehaviorAssessment:
     """Assess one behavior that belongs in the denominator."""
@@ -297,7 +329,7 @@ def _assess(
         for record in declared_here
         if _boundary_satisfies(behavior, record.boundary)
     ]
-    execution_status = _execution_status(adequate, executions)
+    execution_status = _execution_status(adequate, execution_index)
 
     if adequate and (
         not require_execution or execution_status == EXECUTED_PASS_CURRENT
@@ -397,6 +429,7 @@ def compute_behavior_metric(
         if record.evidence_class is EvidenceClass.OBSERVED_EXECUTION
         and record.tier is tier
     ]
+    execution_index = _build_execution_index(executions)
 
     assessments: List[BehaviorAssessment] = []
     assessed = 0
@@ -472,7 +505,7 @@ def compute_behavior_metric(
                 behavior,
                 tier,
                 by_subject.get(behavior.id, ()),
-                executions=executions,
+                execution_index=execution_index,
                 require_execution=require_execution,
             )
         )

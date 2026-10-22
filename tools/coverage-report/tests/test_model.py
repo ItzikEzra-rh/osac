@@ -209,13 +209,14 @@ class TestMerge(unittest.TestCase):
         first = record()
         conflicting = EvidenceRecord(
             id=first.id,
-            evidence_class=EvidenceClass.OBSERVED_EXECUTION,
+            evidence_class=first.evidence_class,
             tier=first.tier,
             feature=first.feature,
             subject=first.subject,
             source=first.source,
             collector=first.collector,
             kind=first.kind,
+            details={"different": True},
         )
         with self.assertRaises(ModelError) as forward:
             merge_batches(
@@ -307,28 +308,25 @@ class TestNoPromotion(unittest.TestCase):
     def test_identity_is_allowed_for_every_class(self):
         for evidence_class in EvidenceClass:
             self.assertIsNone(
-                assert_no_promotion(
-                    {"ev-1": evidence_class}, {"ev-1": evidence_class}
-                )
+                assert_no_promotion(evidence_class, evidence_class)
             )
 
     def test_only_inferred_to_declared_is_allowed(self):
-        allowed = set(ALLOWED_EVIDENCE_TRANSITIONS)
         for previous, current in itertools.product(EvidenceClass, EvidenceClass):
             if previous is current:
                 continue
-            if (previous, current) in allowed:
-                assert_no_promotion({"ev-1": previous}, {"ev-1": current})
+            if (previous, current) in ALLOWED_EVIDENCE_TRANSITIONS:
+                assert_no_promotion(previous, current, evidence_id="ev-1")
                 continue
             with self.assertRaises(EvidencePromotionError) as raised:
-                assert_no_promotion({"ev-1": previous}, {"ev-1": current})
+                assert_no_promotion(previous, current, evidence_id="ev-1")
             self.assertEqual(raised.exception.code, "EVIDENCE_PROMOTION")
             self.assertEqual(
                 raised.exception.details,
                 {"evidence_id": "ev-1", "from": previous.value, "to": current.value},
             )
 
-    def test_accepts_records_as_well_as_mappings(self):
+    def test_merge_keeps_declared_regardless_of_order(self):
         inferred = record(
             evidence_class=EvidenceClass.INFERRED_MAPPING,
             confidence=0.5,
@@ -344,12 +342,40 @@ class TestNoPromotion(unittest.TestCase):
             collector=inferred.collector,
             kind=inferred.kind,
         )
-        assert_no_promotion([inferred], [declared])
-        with self.assertRaises(EvidencePromotionError):
-            assert_no_promotion([declared], [inferred])
+        for pair in ((inferred, declared), (declared, inferred)):
+            merged = merge_batches(
+                [CollectorBatch(collector="a", records=pair)]
+            )
+            self.assertEqual(len(merged.records), 1)
+            self.assertIs(
+                merged.records[0].evidence_class,
+                EvidenceClass.DECLARED_MAPPING,
+            )
+
+    def test_merge_rejects_every_other_class_change(self):
+        measured = record()
+        declared = EvidenceRecord(
+            id=measured.id,
+            evidence_class=EvidenceClass.DECLARED_MAPPING,
+            tier=measured.tier,
+            feature=measured.feature,
+            subject=measured.subject,
+            source=measured.source,
+            collector=measured.collector,
+            kind=measured.kind,
+        )
+        for pair in ((measured, declared), (declared, measured)):
+            with self.assertRaises(EvidencePromotionError) as raised:
+                merge_batches([CollectorBatch(collector="a", records=pair)])
+            self.assertEqual(raised.exception.code, "EVIDENCE_PROMOTION")
 
     def test_new_evidence_ids_are_not_promotions(self):
-        assert_no_promotion({"ev-1": EvidenceClass.GAP_UNKNOWN}, {"ev-2": EvidenceClass.MEASURED})
+        first = record(subject="s1")
+        second = record(subject="s2")
+        merged = merge_batches(
+            [CollectorBatch(collector="a", records=(first, second))]
+        )
+        self.assertEqual(len(merged.records), 2)
 
 
 class TestRevisionFreshness(unittest.TestCase):

@@ -20,8 +20,23 @@ _EVIDENCE_CLASS_LEGEND = (
 )
 
 
+#: Characters that could change Markdown structure or inject HTML/images/links.
+_MARKDOWN_SPECIALS = ("|", "`", "<", ">", "[", "]", "!", "*", "_")
+
+
 def _cell(value: object) -> str:
-    return str(value if value is not None else "").replace("|", "\\|")
+    """Escape untrusted text for a Markdown table cell.
+
+    Table cells carry evidence-controlled text (test titles, paths, diagnostic
+    messages). Newlines become spaces so a value cannot start a new block, and
+    inline HTML, images, links, emphasis, code spans, and cell separators are
+    escaped.
+    """
+    text = str(value if value is not None else "")
+    text = text.replace("\r", " ").replace("\n", " ")
+    for character in _MARKDOWN_SPECIALS:
+        text = text.replace(character, "\\" + character)
+    return text
 
 
 def _percent(value: object) -> str:

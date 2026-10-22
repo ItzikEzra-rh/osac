@@ -150,22 +150,28 @@ def _expect_string(value: object, field: str) -> str:
     return value
 
 
-def _expect_string_list(value: object, field: str) -> List[str]:
+def expect_string_list(
+    value: object, field: str, *, recovery: Optional[str] = None
+) -> List[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ConfigError(
             "field {0} must be a list of strings".format(field),
             field=field,
-            recovery="Use a YAML list of paths/globs, for example [].",
+            recovery=(
+                recovery or "Use a YAML list of paths/globs, for example []."
+            ),
         )
     return list(value)
 
 
-def _expect_mapping(value: object, field: str) -> Mapping[object, object]:
+def expect_mapping(
+    value: object, field: str, *, recovery: Optional[str] = None
+) -> Mapping[object, object]:
     if not isinstance(value, dict):
         raise ConfigError(
             "field {0} must be a mapping".format(field),
             field=field,
-            recovery="Use a YAML mapping for {0}.".format(field),
+            recovery=recovery or "Use a YAML mapping for {0}.".format(field),
         )
     return value
 
@@ -228,7 +234,7 @@ def _validate_version(value: object, field: str) -> int:
 
 
 def _validate_metric_versions(value: object, field: str) -> Dict[str, str]:
-    mapping = _expect_mapping(value, field)
+    mapping = expect_mapping(value, field)
     unknown_tiers = sorted(set(mapping) - set(ALLOWED_METRIC_VERSIONS))
     if unknown_tiers:
         raise ConfigError(
@@ -264,7 +270,7 @@ def _validate_metric_versions(value: object, field: str) -> Dict[str, str]:
 
 
 def _validate_policy(value: object, field: str) -> Policy:
-    mapping = _expect_mapping(value, field)
+    mapping = expect_mapping(value, field)
     unknown = sorted(set(mapping) - _POLICY_KEYS)
     if unknown:
         raise ConfigError(
@@ -372,7 +378,7 @@ def load_config(
     if "enhancement_roots" in raw:
         enhancement_roots = tuple(
             _resolve_path(repo_root, entry)
-            for entry in _expect_string_list(
+            for entry in expect_string_list(
                 raw["enhancement_roots"], "enhancement_roots"
             )
         )
@@ -385,7 +391,7 @@ def load_config(
 
     artifacts_raw = raw.get("artifacts")
     if artifacts_raw is not None:
-        artifacts = _expect_mapping(artifacts_raw, "artifacts")
+        artifacts = expect_mapping(artifacts_raw, "artifacts")
         unknown_artifacts = sorted(set(artifacts) - _ARTIFACT_KEYS)
         if unknown_artifacts:
             raise ConfigError(
@@ -394,10 +400,10 @@ def load_config(
                 candidates=sorted(_ARTIFACT_KEYS),
                 recovery="Allowed artifacts keys are coverprofiles and junit.",
             )
-        coverprofile_values = _expect_string_list(
+        coverprofile_values = expect_string_list(
             artifacts.get("coverprofiles", []), "artifacts.coverprofiles"
         )
-        junit_values = _expect_string_list(
+        junit_values = expect_string_list(
             artifacts.get("junit", []), "artifacts.junit"
         )
         origins["artifacts"] = origin

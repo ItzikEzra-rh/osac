@@ -57,7 +57,6 @@ def make_feature(**overrides) -> FeatureEntry:
             "integration": ("fulfillment-service/it",),
             "e2e": ("tests/e2e",),
         },
-        "extras": {},
     }
     values.update(overrides)
     return FeatureEntry(**values)
@@ -282,6 +281,50 @@ class TestExecutionMatrixIds(unittest.TestCase):
                 "TC-NFR3-01",
             ),
         )
+
+
+REVIEWER_MAPPING = """\
+version: 1
+feature: OSAC-1111
+reviewed_by: {reviewer}
+mappings:
+  - behavior: TC-FR1-01
+    tests:
+      - path: fulfillment-service/it/it_disk_images_api_test.go
+        name: DiskImage API
+        tier: integration
+"""
+
+
+class TestReviewerValidation(MappingFixture):
+    def evidence_class(self, reviewer: str):
+        _, _, batch = self.build(
+            mapping_config=REVIEWER_MAPPING.format(reviewer=reviewer),
+            test_files={
+                "fulfillment-service/it/it_disk_images_api_test.go": PLAIN_API_TEST
+            },
+        )
+        return of_kind(batch, KIND_CONFIG)[0].evidence_class, batch
+
+    def test_non_string_and_placeholder_reviewers_are_unreviewed(self):
+        for reviewer in ("[]", "false", "n/a", "pending review", '"PENDING-REVIEW"'):
+            with self.subTest(reviewer=reviewer):
+                evidence_class, _ = self.evidence_class(reviewer)
+                self.assertEqual(
+                    evidence_class, EvidenceClass.INFERRED_MAPPING
+                )
+
+    def test_valid_user_and_team_handles_are_reviewed(self):
+        for reviewer in ('"@itzik"', "osac-project/qe"):
+            with self.subTest(reviewer=reviewer):
+                evidence_class, _ = self.evidence_class(reviewer)
+                self.assertEqual(
+                    evidence_class, EvidenceClass.DECLARED_MAPPING
+                )
+
+    def test_non_string_reviewer_is_reported(self):
+        _, batch = self.evidence_class("[]")
+        self.assertIn("MAPPING_REVIEWER_INVALID", codes(batch))
 
 
 class TestReviewedConfig(MappingFixture):

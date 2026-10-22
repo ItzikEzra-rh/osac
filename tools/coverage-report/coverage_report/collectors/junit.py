@@ -49,14 +49,11 @@ aliases overlap. Unattributed testcases are dropped and counted in one
 """
 
 import glob
-import json
 import os
 import re
 from dataclasses import dataclass, replace
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from xml.etree import ElementTree
-
-import yaml
 
 from ..model import (
     CollectorBatch,
@@ -68,7 +65,11 @@ from ..model import (
     make_evidence_id,
     revision_freshness,
 )
+from ..manifest import relative_path
+from ..sidecar import read_sidecar
 from . import CollectorContext
+from .behaviors import infer_tier_from_path
+from .mappings import load_mapping_config, mapping_test_entries
 
 COLLECTOR_NAME = "junit"
 KIND = "junit-testcase"
@@ -76,6 +77,12 @@ KIND = "junit-testcase"
 OUTCOME_PASSED = "passed"
 OUTCOME_FAILED = "failed"
 OUTCOME_SKIPPED = "skipped"
+OUTCOME_UNKNOWN = "unknown"
+
+#: Status values that positively assert a pass.
+_PASS_STATUSES = frozenset({"passed", "success", "pass"})
+_FAIL_STATUSES = frozenset({"failed", "failure", "error"})
+_SKIP_STATUSES = frozenset({"skipped", "pending", "disabled"})
 
 #: Failure text is truncated to this many characters.
 MESSAGE_LIMIT = 200
@@ -118,6 +125,98 @@ def normalize_test_identity(suite: str, name: str) -> str:
     if suite_part and name_part:
         return "{0}::{1}".format(suite_part, name_part)
     return suite_part or name_part
+
+
+def match_key(value: object) -> str:
+    """Normalize a test name or identity for comparison."""
+    return _WHITESPACE.sub(" ", str(value or "").strip()).casefold()
+
+
+def normalize_test_path(value: object) -> str:
+    """Normalize a file path for identity matching."""
+    text = str(value or "").replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text.strip("/").casefold()
+
+
+@dataclass(frozen=True)
+class ExecutionMatchKeys:
+    """Precomputed lookup keys for one execution record."""
+
+    identity: str
+    name: str
+    prefixes: Tuple[str, ...]
+    path_suffixes: Tuple[str, ...]
+
+
+def execution_match_keys(
+    identity: str, path: str = "", source: str = ""
+) -> ExecutionMatchKeys:
+    """Return the normalized keys a mapping can match against.
+
+    ``prefixes`` are the ``::``-bounded prefixes of the identity, which cover a
+    mapping recorded at suite/describe granularity. ``path_suffixes`` cover the
+    ``endswith('/' + mapped_path)`` rule for both the reported file and the
+    artifact path.
+    """
+    identity_key = match_key(identity)
+    name_key = identity_key.rsplit("::", 1)[-1]
+    prefixes: List[str] = []
+    start = 0
+    while True:
+        index = identity_key.find("::", start)
+        if index < 0:
+            break
+        prefixes.append(identity_key[:index])
+        start = index + 2
+
+    suffixes: List[str] = []
+    for raw in (path, source):
+        key = normalize_test_path(raw)
+        if not key:
+            continue
+        parts = key.split("/")
+        for index in range(len(parts)):
+            suffix = "/".join(parts[index:])
+            if suffix not in suffixes:
+                suffixes.append(suffix)
+    return ExecutionMatchKeys(
+        identity=identity_key,
+        name=name_key,
+        prefixes=tuple(dict.fromkeys(prefixes)),
+        path_suffixes=tuple(suffixes),
+    )
+
+
+def test_identity_matches(
+    *,
+    mapped_name: str,
+    mapped_path: str,
+    identity: str,
+    name: str = "",
+    path: str = "",
+    source: str = "",
+) -> bool:
+    """Return whether one mapping entry names this execution.
+
+    A mapped name matches the identity, the explicit name, or a ``::``-bounded
+    prefix of the identity. When the mapping has no name, a path match is
+    required, either exact or as a path suffix. This is the only identity rule;
+    the metrics engine uses :func:`execution_match_keys` to build the same
+    match as an index lookup.
+    """
+    keys = execution_match_keys(identity, path, source)
+    target = match_key(mapped_name)
+    if target:
+        if target == keys.identity or target == match_key(name):
+            return True
+        return target in keys.prefixes
+
+    mapped = normalize_test_path(mapped_path)
+    if not mapped:
+        return False
+    return mapped in keys.path_suffixes
 
 
 @dataclass(frozen=True)
@@ -165,13 +264,13 @@ class JunitCollector:
                 collector=COLLECTOR_NAME, diagnostics=tuple(diagnostics)
             )
 
-        mapping_index = _MappingIndex(ctx)
+        attribution = _AttributionIndex(ctx)
         observations: List[_Observation] = []
         unattributed = 0
 
         for path in paths:
             file_observations, file_diagnostics, file_unattributed = _collect_file(
-                ctx, path, mapping_index
+                ctx, path, attribution
             )
             observations.extend(file_observations)
             diagnostics.extend(file_diagnostics)
@@ -237,11 +336,11 @@ def _discover_inputs(ctx: CollectorContext) -> List[str]:
 
 
 def _collect_file(
-    ctx: CollectorContext, path: str, mapping_index: "_MappingIndex"
+    ctx: CollectorContext, path: str, attribution: "_AttributionIndex"
 ) -> Tuple[List[_Observation], List[Diagnostic], int]:
     """Parse one JUnit file. Recoverable problems become diagnostics."""
     diagnostics: List[Diagnostic] = []
-    source = _repo_relative(ctx.repo_root, path)
+    source = relative_path(ctx.repo_root, path)
 
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as handle:
@@ -322,15 +421,14 @@ def _collect_file(
         )
         return [], diagnostics, 0
 
-    sidecar, sidecar_error = _read_sidecar(path)
+    sidecar_data, sidecar_error = read_sidecar(path)
+    sidecar = sidecar_data or {}
     if sidecar_error:
         diagnostics.append(
             _diagnostic(
                 ctx,
                 "EXECUTION_METADATA_UNREADABLE",
-                "{0}: sidecar {1} is not valid JSON".format(
-                    source, _repo_relative(ctx.repo_root, sidecar_error)
-                ),
+                "{0}: {1}".format(source, sidecar_error),
                 severity="warning",
                 operation="provenance",
                 recovery=(
@@ -385,20 +483,18 @@ def _collect_file(
                 tier_unknown += 1
                 continue
 
-            feature = _attribute(
-                ctx,
+            feature = attribution.attribute(
                 identity=identity,
                 name=name,
                 file_attr=file_attr,
                 source=source,
-                mapping_index=mapping_index,
             )
             if feature is None:
                 unattributed += 1
                 continue
 
             outcome, message = _outcome_of(testcase)
-            freshness = _freshness(revision, ctx.sha)
+            freshness = revision_freshness(revision, ctx.sha)
 
             details: Dict[str, object] = {
                 "outcome": outcome,
@@ -469,21 +565,6 @@ def _collect_file(
     return observations, diagnostics, unattributed
 
 
-def _read_sidecar(path: str) -> Tuple[Dict[str, object], Optional[str]]:
-    """Return ``(<file>.meta.json content, unreadable path or None)``."""
-    sidecar = path + ".meta.json"
-    if not os.path.isfile(sidecar):
-        return {}, None
-    try:
-        with open(sidecar, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return {}, sidecar
-    if not isinstance(data, dict):
-        return {}, sidecar
-    return data, None
-
-
 def _suite_properties(suite: ElementTree.Element) -> Dict[str, str]:
     values: Dict[str, str] = {}
     for properties in suite:
@@ -508,7 +589,13 @@ def _first_property(properties: Dict[str, str], names: Sequence[str]) -> Optiona
 
 
 def _outcome_of(testcase: ElementTree.Element) -> Tuple[str, str]:
-    """Return ``(outcome, failure message)`` for one testcase."""
+    """Return ``(outcome, failure message)`` for one testcase.
+
+    Passing is a positive claim: a testcase passes only when it has no
+    failure/error/skipped child and either no ``status`` attribute or one of the
+    known pass values. An unrecognized status such as ``notrun`` is
+    ``unknown``, never a pass.
+    """
     for child in testcase:
         tag = _local_name(child.tag)
         if tag in ("failure", "error"):
@@ -517,12 +604,15 @@ def _outcome_of(testcase: ElementTree.Element) -> Tuple[str, str]:
             )
         if tag == "skipped":
             return OUTCOME_SKIPPED, ""
+
     status = (_clean(testcase.get("status")) or "").lower()
-    if status in ("failed", "failure", "error"):
+    if not status or status in _PASS_STATUSES:
+        return OUTCOME_PASSED, ""
+    if status in _FAIL_STATUSES:
         return OUTCOME_FAILED, ""
-    if status in ("skipped", "pending", "disabled"):
+    if status in _SKIP_STATUSES:
         return OUTCOME_SKIPPED, ""
-    return OUTCOME_PASSED, ""
+    return OUTCOME_UNKNOWN, ""
 
 
 def _duration_of(testcase: ElementTree.Element) -> Optional[float]:
@@ -545,15 +635,6 @@ def _line_of(testcase: ElementTree.Element) -> Optional[int]:
         return None
 
 
-def _freshness(revision: Optional[str], sha: str) -> Freshness:
-    """Classify a report revision against the reported commit.
-
-    Uses the shared rule so JUnit and coverprofile provenance agree, including
-    abbreviated commit ids.
-    """
-    return revision_freshness(revision, sha)
-
-
 # ---------------------------------------------------------------------------
 # Tier inference
 
@@ -565,15 +646,25 @@ def _infer_tier(
     source: str,
     basename: str,
 ) -> Optional[Tier]:
-    """Infer the tier of one testcase, or return ``None`` when unknowable."""
-    references = [value for value in (file_attr, source) if value]
-    classname_path = classname.strip()
+    """Infer the tier of one testcase, or return ``None`` when unknowable.
 
-    if _is_e2e(classname_path, references):
-        return Tier.E2E
-    if _is_integration(classname_path, references):
-        return Tier.INTEGRATION
-    if _is_internal_go_package(classname_path):
+    The path rules live in :func:`behaviors.infer_tier_from_path`; this
+    function only adapts a dotted classname and adds the ``*.tier.xml``
+    filename fallback. The category order is preserved: e2e, integration, then
+    unit, with the classname considered before the artifact path.
+    """
+    classname_path = classname.replace(".", "/") if classname else ""
+    class_tier = infer_tier_from_path(classname_path) if classname_path else None
+    reference_tiers = [
+        tier
+        for tier in (infer_tier_from_path(value) for value in (file_attr, source) if value)
+        if tier is not None
+    ]
+
+    for tier in (Tier.E2E, Tier.INTEGRATION):
+        if class_tier is tier or tier in reference_tiers:
+            return tier
+    if class_tier is Tier.UNIT:
         return Tier.UNIT
 
     lowered = basename.lower()
@@ -583,169 +674,102 @@ def _infer_tier(
     return None
 
 
-def _is_e2e(classname: str, references: Sequence[str]) -> bool:
-    if classname == "tests.e2e" or classname.startswith("tests.e2e."):
-        return True
-    return any(_has_segment(reference, "tests/e2e") for reference in references)
-
-
-def _is_integration(classname: str, references: Sequence[str]) -> bool:
-    if _has_segment(classname, "fulfillment-service/it"):
-        return True
-    if _has_segment(classname, "it"):
-        return True
-    return any(_has_segment(reference, "it") for reference in references)
-
-
-def _is_internal_go_package(classname: str) -> bool:
-    if not classname:
-        return False
-    return classname.startswith("internal/") or _has_segment(classname, "internal")
-
-
-def _has_segment(value: str, segment: str) -> bool:
-    """Return whether ``value`` contains ``segment`` as whole path segments."""
-    if not value or not segment:
-        return False
-    padded = "/" + _normalize_path(value).strip("/") + "/"
-    return ("/" + segment.strip("/") + "/") in padded
-
-
 # ---------------------------------------------------------------------------
 # Feature attribution
 
 
-class _MappingIndex:
-    """Lazily load ``config/mappings/<KEY>.yaml`` per feature."""
+class _AttributionIndex:
+    """Compiled attribution rules for one collection run.
+
+    Feature needles are compiled once. Mapping files are loaded once per
+    feature and indexed by test name and path, so attributing a testcase is a
+    handful of dictionary lookups instead of a scan over every feature and
+    every mapping entry.
+    """
 
     def __init__(self, ctx: CollectorContext) -> None:
         self._ctx = ctx
-        self._cache: Dict[str, Optional[Tuple[Dict[str, str], ...]]] = {}
-
-    def tests(self, key: str) -> Tuple[Dict[str, str], ...]:
-        if key not in self._cache:
-            self._cache[key] = self._load(key)
-        return self._cache[key] or ()
-
-    def _load(self, key: str) -> Optional[Tuple[Dict[str, str], ...]]:
-        for candidate in self._candidates(key):
-            if not os.path.isfile(candidate):
-                continue
-            try:
-                with open(candidate, "r", encoding="utf-8") as handle:
-                    data = yaml.safe_load(handle)
-            except (OSError, yaml.YAMLError):
-                return None
-            entries = []
-            for entry in _iter_mapping_tests(data):
-                normalized = {
-                    "path": _normalize_path(_clean(entry.get("path")) or ""),
-                    "name": _WHITESPACE.sub(
-                        " ", (_clean(entry.get("name")) or "").strip()
-                    ),
-                }
-                if normalized["path"] or normalized["name"]:
-                    entries.append(normalized)
-            return tuple(entries)
-        return None
-
-    def _candidates(self, key: str) -> Tuple[str, ...]:
-        directories = [
-            os.path.join(self._ctx.repo_root, "config", "mappings"),
-            os.path.join(
-                os.path.dirname(self._ctx.config.features_file), "mappings"
-            ),
+        self._features = {feature.key: feature for feature in ctx.features}
+        self._order = {
+            feature.key: index for index, feature in enumerate(ctx.features)
+        }
+        self._needles = [
+            (
+                feature.key,
+                tuple(
+                    re.compile(
+                        r"(?<![0-9A-Za-z])"
+                        + re.escape(needle)
+                        + r"(?![0-9A-Za-z])",
+                        re.IGNORECASE,
+                    )
+                    for needle in self._feature_needles(feature)
+                ),
+            )
+            for feature in ctx.features
         ]
-        candidates: List[str] = []
-        for directory in directories:
-            for extension in (".yaml", ".yml"):
-                candidates.append(os.path.join(directory, key + extension))
-        return tuple(candidates)
+        self._cache: Dict[str, Tuple[Dict[str, str], ...]] = {}
+        self._by_name: Dict[str, List[str]] = {}
+        self._by_path: Dict[str, List[str]] = {}
+        for feature in ctx.features:
+            for entry in self._tests(feature.key):
+                name = match_key(entry.get("name"))
+                if name:
+                    self._by_name.setdefault(name, []).append(feature.key)
+                path = normalize_test_path(entry.get("path"))
+                if path:
+                    self._by_path.setdefault(path, []).append(feature.key)
 
-
-def _iter_mapping_tests(data: object) -> Iterable[Dict[str, object]]:
-    """Yield ``mappings[].tests[]`` entries, tolerating shape variation."""
-    if not isinstance(data, dict):
-        return
-    mappings = data.get("mappings")
-    groups = mappings if isinstance(mappings, list) else [data]
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        tests = group.get("tests")
-        if not isinstance(tests, list):
-            continue
-        for test in tests:
-            if isinstance(test, dict):
-                yield test
-
-
-def _attribute(
-    ctx: CollectorContext,
-    *,
-    identity: str,
-    name: str,
-    file_attr: str,
-    source: str,
-    mapping_index: "_MappingIndex",
-) -> Optional[str]:
-    """Return the first in-scope feature the testcase belongs to, if any."""
-    for feature in ctx.features:
+    @staticmethod
+    def _feature_needles(feature) -> Tuple[str, ...]:
         needles = [feature.key, feature.name]
         needles.extend(feature.aliases)
-        for needle in needles:
-            if needle and _matches_needle(identity, needle):
-                return feature.key
+        return tuple(needle for needle in needles if needle)
 
-    for feature in ctx.features:
-        entries = mapping_index.tests(feature.key)
-        for entry in entries:
-            if _matches_mapping(
-                entry, identity=identity, name=name, file_attr=file_attr, source=source
-            ):
-                return feature.key
-    return None
+    def _tests(self, key: str) -> Tuple[Dict[str, str], ...]:
+        if key not in self._cache:
+            feature = self._features[key]
+            data = load_mapping_config(
+                self._ctx, feature, diagnostics=[]
+            )
+            self._cache[key] = (
+                tuple(mapping_test_entries(data)) if data is not None else ()
+            )
+        return self._cache[key]
 
+    def attribute(
+        self,
+        *,
+        identity: str,
+        name: str,
+        file_attr: str,
+        source: str,
+    ) -> Optional[str]:
+        """Return the first in-scope feature the testcase belongs to."""
+        for key, patterns in self._needles:
+            if any(pattern.search(identity) for pattern in patterns):
+                return key
 
-def _matches_needle(identity: str, needle: str) -> bool:
-    pattern = (
-        r"(?<![0-9A-Za-z])"
-        + re.escape(needle)
-        + r"(?![0-9A-Za-z])"
-    )
-    return re.search(pattern, identity, re.IGNORECASE) is not None
+        keys = execution_match_keys(identity, file_attr, source)
+        name_keys: set = set()
+        for candidate in (keys.identity, match_key(name)):
+            if not candidate:
+                continue
+            parts = candidate.split("::")
+            for index in range(len(parts)):
+                name_keys.add("::".join(parts[index:]))
 
-
-def _matches_mapping(
-    entry: Dict[str, str],
-    *,
-    identity: str,
-    name: str,
-    file_attr: str,
-    source: str,
-) -> bool:
-    mapped_name = entry.get("name") or ""
-    if mapped_name:
-        candidates = {
-            identity.lower(),
-            name.lower(),
-        }
-        lowered = mapped_name.lower()
-        if lowered in candidates:
-            return True
-        if any(
-            candidate.endswith("::" + lowered) for candidate in candidates
-        ):
-            return True
-
-    mapped_path = entry.get("path") or ""
-    if mapped_path:
-        lowered = mapped_path.lower()
-        for reference in (file_attr, source):
-            normalized = _normalize_path(reference).lower()
-            if normalized == lowered or normalized.endswith("/" + lowered):
-                return True
-    return False
+        features: set = set()
+        for key in name_keys:
+            features.update(self._by_name.get(key, ()))
+        for suffix in keys.path_suffixes:
+            features.update(self._by_path.get(suffix, ()))
+        if not features:
+            return None
+        return min(
+            features,
+            key=lambda key: self._order.get(key, len(self._order)),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -853,7 +877,7 @@ def _merge_revisions(
     details["revisions"] = revisions
     return replace(
         chosen,
-        freshness=_freshness(chosen.revision, ctx.sha),
+        freshness=revision_freshness(chosen.revision, ctx.sha),
         details=details,
     )
 
@@ -914,19 +938,6 @@ def _normalize_path(value: str) -> str:
     while normalized.startswith("./"):
         normalized = normalized[2:]
     return normalized
-
-
-def _repo_relative(repo_root: str, path: str) -> str:
-    """Return ``path`` relative to the repository root, POSIX-style."""
-    absolute = os.path.abspath(path)
-    try:
-        relative = os.path.relpath(absolute, repo_root)
-    except ValueError:
-        return absolute.replace(os.sep, "/")
-    relative = relative.replace(os.sep, "/")
-    if relative == ".." or relative.startswith("../"):
-        return absolute.replace(os.sep, "/")
-    return relative
 
 
 collector = JunitCollector()

@@ -45,7 +45,7 @@ class TestRegistry(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "FEATURES_DUPLICATE_KEY")
 
-    def test_unknown_feature_field_is_preserved_for_later_waves(self):
+    def test_unknown_feature_field_is_ignored(self):
         body = (
             "version: 1\n"
             "features:\n"
@@ -58,7 +58,7 @@ class TestRegistry(unittest.TestCase):
             path.write_text(body, encoding="utf-8")
             registry = load_registry(str(path))
 
-        self.assertEqual(registry.features[0].extras, {"future_field": "keep-me"})
+        self.assertEqual(registry.features[0].key, "OSAC-1")
 
     def test_unit_packages_accept_strings_and_mappings(self):
         body = (

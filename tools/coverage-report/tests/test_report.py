@@ -14,6 +14,7 @@ from coverage_report.cli import main
 from coverage_report.collectors import clear, register
 from coverage_report.collectors.builtin import BUILTIN_COLLECTORS
 
+from coverage_report.render_md import _cell
 from coverage_report.report import build_summary
 
 import schema_check
@@ -867,6 +868,22 @@ class TestStates(unittest.TestCase):
             self.assertEqual(metrics[tier]["state"], "blocked")
         codes = [diagnostic["code"] for diagnostic in report["diagnostics"]]
         self.assertIn("BEHAVIOR_INVENTORY_DUPLICATE", codes)
+
+
+class TestMarkdownEscaping(unittest.TestCase):
+    def test_untrusted_title_cannot_inject_markdown_or_html(self):
+        title = "line one\nline two <img src=x> [x](http://e)"
+
+        self.assertEqual(
+            _cell(title),
+            "line one line two \\<img src=x\\> \\[x\\](http://e)",
+        )
+
+    def test_table_and_emphasis_characters_are_escaped(self):
+        self.assertEqual(
+            _cell("a|b `code` *em* _under_ !image"),
+            "a\\|b \\`code\\` \\*em\\* \\_under\\_ \\!image",
+        )
 
 
 class TestSummaryPolicy(unittest.TestCase):

@@ -194,16 +194,6 @@ class Boundary:
             simulated=tuple(value.get("simulated") or ()),
         )
 
-    def kinds(self) -> Tuple[str, ...]:
-        """Return the non-empty boundary kinds, sorted."""
-        present = []
-        if self.real:
-            present.append("real")
-        if self.simulated:
-            present.append("simulated")
-        return tuple(sorted(present))
-
-
 @dataclass(frozen=True)
 class EvidenceRecord:
     """One observation about one subject, produced by one collector.
@@ -682,6 +672,51 @@ def _dedupe_by_key(
     return list(chosen.values())
 
 
+def _merge_records(records: Sequence[EvidenceRecord]) -> List[EvidenceRecord]:
+    """Merge records by id, enforcing the evidence-class invariant.
+
+    Two records for the same subject may differ only by the one allowed
+    transition, inferred_mapping -> declared_mapping, and the declared record
+    wins regardless of input order. Any other class change is a promotion and
+    raises; two records of the same class with different content are a model
+    conflict.
+    """
+    grouped: Dict[str, List[EvidenceRecord]] = {}
+    for record in records:
+        grouped.setdefault(record.id, []).append(record)
+
+    merged: List[EvidenceRecord] = []
+    for evidence_id in sorted(grouped):
+        group = grouped[evidence_id]
+        classes = {record.evidence_class for record in group}
+
+        if classes == {
+            EvidenceClass.INFERRED_MAPPING,
+            EvidenceClass.DECLARED_MAPPING,
+        }:
+            chosen = [
+                record
+                for record in group
+                if record.evidence_class is EvidenceClass.DECLARED_MAPPING
+            ]
+        elif len(classes) > 1:
+            previous, current = sorted(classes, key=lambda item: item.value)
+            assert_no_promotion(previous, current, evidence_id=evidence_id)
+            chosen = group  # unreachable; keeps type checkers happy
+        else:
+            chosen = group
+
+        merged.extend(
+            _dedupe_by_key(
+                chosen,
+                key=lambda record: record.id,
+                payload=_canonical_record_payload,
+                kind="evidence record",
+            )
+        )
+    return merged
+
+
 def merge_batches(batches: Iterable[CollectorBatch]) -> MergedBatches:
     """Merge collector batches exactly once, deterministically.
 
@@ -703,12 +738,7 @@ def merge_batches(batches: Iterable[CollectorBatch]) -> MergedBatches:
         diagnostics.extend(batch.diagnostics)
         inventories.extend(batch.inventories)
 
-    merged_records = _dedupe_by_key(
-        records,
-        key=lambda record: record.id,
-        payload=_canonical_record_payload,
-        kind="evidence record",
-    )
+    merged_records = _merge_records(records)
     merged_behaviors = _dedupe_by_key(
         behaviors,
         key=lambda behavior: behavior.id,
@@ -762,56 +792,37 @@ def merge_batches(batches: Iterable[CollectorBatch]) -> MergedBatches:
     )
 
 
-def evidence_class_map(
-    evidence: Union[Mapping[str, EvidenceClass], Iterable[EvidenceRecord]]
-) -> Dict[str, EvidenceClass]:
-    """Normalize either a mapping or an iterable of records to id -> class."""
-    if isinstance(evidence, Mapping):
-        return {
-            str(evidence_id): EvidenceClass(evidence_class)
-            for evidence_id, evidence_class in evidence.items()
-        }
-    return {
-        record.id: record.evidence_class
-        for record in evidence
-    }
-
-
 def assert_no_promotion(
-    before: Union[Mapping[str, EvidenceClass], Iterable[EvidenceRecord]],
-    after: Union[Mapping[str, EvidenceClass], Iterable[EvidenceRecord]],
+    previous: EvidenceClass,
+    current: EvidenceClass,
+    *,
+    evidence_id: str = "",
 ) -> None:
     """Reject every evidence-class change except inferred -> declared.
 
-    Args:
-        before: Evidence-class mapping (id -> class) or records from an earlier
-            collection pass.
-        after: The same shape for the later pass.
+    This is called by :func:`merge_batches`; there is no other way for a class
+    to change during a run.
 
     Raises:
         EvidencePromotionError: On any prohibited transition, naming the id and
             both classes.
     """
-    before_map = evidence_class_map(before)
-    after_map = evidence_class_map(after)
-
-    for evidence_id in sorted(set(before_map) & set(after_map)):
-        previous = before_map[evidence_id]
-        current = after_map[evidence_id]
-        if previous is current or previous == current:
-            continue
-        if (previous, current) in ALLOWED_EVIDENCE_TRANSITIONS:
-            continue
-        raise EvidencePromotionError(
-            "evidence {0} changed class {1} -> {2}; only inferred_mapping -> "
-            "declared_mapping is allowed".format(
-                evidence_id, previous.value, current.value
-            ),
-            details={
-                "evidence_id": evidence_id,
-                "from": previous.value,
-                "to": current.value,
-            },
-            recovery="Keep the original class, or supply a new evidence id from a "
-            "collector that genuinely measures the subject.",
-        )
+    previous = EvidenceClass(previous)
+    current = EvidenceClass(current)
+    if previous is current:
+        return
+    if (previous, current) in ALLOWED_EVIDENCE_TRANSITIONS:
+        return
+    raise EvidencePromotionError(
+        "evidence {0} changed class {1} -> {2}; only inferred_mapping -> "
+        "declared_mapping is allowed".format(
+            evidence_id or "<unknown>", previous.value, current.value
+        ),
+        details={
+            "evidence_id": evidence_id,
+            "from": previous.value,
+            "to": current.value,
+        },
+        recovery="Keep the original class, or supply a new evidence id from a "
+        "collector that genuinely measures the subject.",
+    )

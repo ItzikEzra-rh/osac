@@ -233,6 +233,7 @@ class TestPytestReport(JunitTestCase):
             "\n".join(
                 (
                     "version: 1",
+                    "feature: OSAC-3000",
                     "mappings:",
                     "  - behavior: cluster-lifecycle",
                     "    tests:",
@@ -254,6 +255,33 @@ class TestPytestReport(JunitTestCase):
         self.assertEqual(skipped.details["outcome"], "skipped")
 
 
+class TestOutcomes(JunitTestCase):
+    def test_unrecognized_status_is_unknown_not_passed(self):
+        self.write_text(
+            "tests/e2e/reports/odd.xml",
+            "<testsuite name=\"s\">"
+            "<testcase classname=\"tests.e2e.x\" name=\"OSAC-2540 odd\" "
+            "status=\"notrun\"/></testsuite>",
+        )
+
+        batch = self.collect_files()
+
+        self.assertEqual(len(batch.records), 1)
+        self.assertEqual(batch.records[0].details["outcome"], "unknown")
+
+    def test_missing_status_is_a_pass(self):
+        self.write_text(
+            "tests/e2e/reports/plain.xml",
+            "<testsuite name=\"s\">"
+            "<testcase classname=\"tests.e2e.x\" name=\"OSAC-2540 plain\"/>"
+            "</testsuite>",
+        )
+
+        batch = self.collect_files()
+
+        self.assertEqual(batch.records[0].details["outcome"], "passed")
+
+
 class TestTierInference(JunitTestCase):
     def test_internal_go_package_is_unit(self):
         self.write_text(
@@ -265,6 +293,7 @@ class TestTierInference(JunitTestCase):
         )
         self.write_text(
             "config/mappings/OSAC-2540.yaml",
+            "version: 1\nfeature: OSAC-2540\n"
             "mappings:\n  - tests:\n      - name: TestCreate\n",
         )
 
@@ -622,6 +651,7 @@ class TestAttribution(JunitTestCase):
         )
         self.write_text(
             "config/mappings/OSAC-2540.yaml",
+            "version: 1\nfeature: OSAC-2540\n"
             "mappings:\n"
             "  - tests:\n"
             "      - name: DiskImage API::DiskImage creates an image\n",

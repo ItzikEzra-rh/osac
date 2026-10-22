@@ -28,16 +28,13 @@ import yaml
 from ..config import bundled_features_file
 from ..manifest import relative_path
 from ..model import Diagnostic, Tier
+from ..review import is_reviewed
 from . import CollectorContext
 
 ORIGIN_TESTPLAN = "testplan"
 ORIGIN_MAPPING_CONFIG = "mapping-config"
 
 OPERATION = "resolve_tier"
-
-_UNREVIEWED_MARKERS = frozenset(
-    {"", "pending-review", "pending", "todo", "tbd", "unreviewed", "none"}
-)
 
 CONFIG_DIR_NAME = "mappings"
 
@@ -53,23 +50,18 @@ class TierAssignment:
 
 def mapping_config_path(ctx: CollectorContext, feature_key: str) -> Optional[str]:
     """Return the mapping file for a feature, repository first, then bundled."""
-    candidates = (
-        os.path.join(ctx.repo_root, "config", CONFIG_DIR_NAME, feature_key + ".yaml"),
-        os.path.join(
-            os.path.dirname(bundled_features_file()),
-            CONFIG_DIR_NAME,
-            feature_key + ".yaml",
-        ),
+    directories = (
+        os.path.join(ctx.repo_root, "config", CONFIG_DIR_NAME),
+        os.path.join(os.path.dirname(bundled_features_file()), CONFIG_DIR_NAME),
     )
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
+    # .yaml wins over .yml in each location; the repository wins over the
+    # bundled copy. This is the single place the convention is decided.
+    for directory in directories:
+        for extension in (".yaml", ".yml"):
+            candidate = os.path.join(directory, feature_key + extension)
+            if os.path.isfile(candidate):
+                return candidate
     return None
-
-
-def _is_reviewed(value: object) -> bool:
-    text = str(value if value is not None else "").strip().casefold()
-    return text not in _UNREVIEWED_MARKERS
 
 
 def _diagnostic(
@@ -134,7 +126,7 @@ def load_tier_overrides(
         )
         return {}
 
-    reviewed = _is_reviewed(data.get("reviewed_by"))
+    reviewed = is_reviewed(data.get("reviewed_by"))
     assignments: Dict[str, TierAssignment] = {}
     for raw_id in sorted(raw):
         if not isinstance(raw_id, str) or not raw_id.strip():
