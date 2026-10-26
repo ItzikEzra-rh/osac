@@ -81,8 +81,9 @@ labels a working group in the report header. When a feature has several
 | gap | no existing test, a proposed/missing path, no path, or no tier | drives the next action |
 
 A symlinked `enhancement-proposals` checkout and `--allow-external-root` paths
-can supply test-plan files outside the repository. This exception applies to
-test-plan files only; coverprofiles and area configs must stay inside it.
+may supply test-plan files from outside the repository. Only test-plan paths
+are checked for containment; coverprofiles and `--features` files may live
+anywhere.
 
 A behavior is a `#### TC-...: title` (or `###`) heading. Its priority and
 automation come from the `| ... | Priority | Automation |` table that follows
