@@ -34,6 +34,7 @@ import (
 	"github.com/osac-project/osac/fulfillment-service/internal/database"
 	"github.com/osac-project/osac/fulfillment-service/internal/database/dao"
 	"github.com/osac-project/osac/fulfillment-service/internal/utils"
+	"github.com/osac-project/osac/fulfillment-service/internal/validation"
 	"github.com/osac-project/osac/fulfillment-service/internal/vault"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
@@ -336,7 +337,7 @@ func (s *PrivateBareMetalInstancesServer) prepareCreate(ctx context.Context, can
 	if err = validatePlatformReference(ref, "bare metal instance type", " in spec.instance_type"); err != nil {
 		return
 	}
-	instanceType, err := resolveAndCanonicalizeReference(ctx, s.instanceTypesDao, candidate.GetMetadata(), ref,
+	instanceType, err := resolveAndCanonicalizeLockedReference(ctx, s.instanceTypesDao, candidate.GetMetadata(), ref,
 		"bare metal instance type", grpccodes.NotFound)
 	if err != nil {
 		return
@@ -400,7 +401,14 @@ func (s *PrivateBareMetalInstancesServer) prepareCreate(ctx context.Context, can
 			return nil, err
 		}
 		candidate.GetSpec().SetDiskImage(canonicalDiskImageReference(resolved))
-		return validateResolvedDiskImage(resolved, refKey(ref), "")
+		warnings, err := validateResolvedDiskImage(resolved, refKey(ref), "")
+		if err != nil {
+			return nil, err
+		}
+		if err := validation.ValidateBareMetalDiskImageArchitecture(instanceType, resolved); err != nil {
+			return nil, grpcstatus.Error(grpccodes.InvalidArgument, err.Error())
+		}
+		return warnings, nil
 	}
 
 	return nil, grpcstatus.Errorf(grpccodes.InvalidArgument, "disk_image is mandatory")
@@ -430,14 +438,14 @@ func (s *PrivateBareMetalInstancesServer) resolveCreationSource(ctx context.Cont
 func (s *PrivateBareMetalInstancesServer) Update(ctx context.Context,
 	request *privatev1.BareMetalInstancesUpdateRequest) (response *privatev1.BareMetalInstancesUpdateResponse, err error) {
 	err = s.generic.UpdateWithCandidatePreparation(ctx, request, &response, func(ctx context.Context, current, candidate *privatev1.BareMetalInstance) error {
-		if err := validateBareMetalImmutability(current, candidate, request.GetUpdateMask()); err != nil {
-			return err
-		}
 		if err := s.validateAndResolveUserDataSecret(
 			ctx,
 			candidate.GetSpec(),
-			updateIncludesField(request.GetUpdateMask(), "spec.user_data_secret"),
+			updateIncludesField(request.GetUpdateMask(), "spec.user_data_source"),
 		); err != nil {
+			return err
+		}
+		if err := validateBareMetalImmutability(current, candidate, request.GetUpdateMask()); err != nil {
 			return err
 		}
 		return nil
@@ -450,20 +458,16 @@ func (s *PrivateBareMetalInstancesServer) validateAndResolveUserDataSecret(
 	spec *privatev1.BareMetalInstanceSpec,
 	resolve bool,
 ) error {
-	if spec.HasUserData() && spec.GetUserDataSecret() != nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"user_data and user_data_secret are mutually exclusive")
-	}
-	if !resolve || spec.GetUserDataSecret() == nil {
+	if !resolve || spec.GetUserDataSource().GetSecret() == nil {
 		return nil
 	}
 	resolved, err := validateUserDataSecret(
-		ctx, s.logger, s.secretsDao, s.secretStore, spec.GetUserDataSecret(),
+		ctx, s.logger, s.secretsDao, s.secretStore, spec.GetUserDataSource().GetSecret(),
 	)
 	if err != nil {
 		return err
 	}
-	spec.SetUserDataSecret(resolved)
+	spec.GetUserDataSource().SetSecret(resolved)
 	return nil
 }
 
@@ -558,16 +562,16 @@ func (s *PrivateBareMetalInstancesServer) validateSpec(bmi *privatev1.BareMetalI
 		}
 	}
 
-	if spec.HasUserData() {
-		if err := validateBareMetalUserData([]byte(spec.GetUserData())); err != nil {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument, "spec.user_data: %s", err)
+	if spec.GetUserDataSource().HasInline() {
+		if err := validateBareMetalUserData([]byte(spec.GetUserDataSource().GetInline())); err != nil {
+			return grpcstatus.Errorf(grpccodes.InvalidArgument, "spec.user_data_source.inline: %s", err)
 		}
 	}
 
 	// If none of the authentication inputs are set, the server cannot be accessed after deployment.
-	if spec.GetSshPublicKey() == "" && spec.GetUserData() == "" && spec.GetUserDataSecret() == nil {
+	if spec.GetSshPublicKey() == "" && spec.GetUserDataSource().GetInline() == "" && spec.GetUserDataSource().GetSecret() == nil {
 		return grpcstatus.Error(grpccodes.InvalidArgument,
-			"at least one authentication method must be provided: spec.ssh_public_key, spec.user_data or spec.user_data_secret")
+			"at least one authentication method must be provided: spec.ssh_public_key, spec.user_data_source.inline or spec.user_data_source.secret")
 	}
 
 	return nil
@@ -818,7 +822,7 @@ func (s *PrivateBareMetalInstancesServer) applyBareMetalTemplate(bmi *privatev1.
 	return nil
 }
 
-// validateBareMetalImmutability ensures template, catalog_item, instance_type, disk_image, ssh_public_key, user_data, template_parameters,
+// validateBareMetalImmutability ensures template, catalog_item, instance_type, disk_image, ssh_public_key, user_data_source.inline, template_parameters,
 // auto_external_ip_attachment, and network_attachments cannot be changed after creation.
 func validateBareMetalImmutability(
 	current, candidate *privatev1.BareMetalInstance,
@@ -829,8 +833,7 @@ func validateBareMetalImmutability(
 	updatingInstanceType := updateIncludesField(mask, "spec.instance_type")
 	updatingDiskImage := updateIncludesField(mask, "spec.disk_image")
 	updatingSshKey := updateIncludesField(mask, "spec.ssh_public_key")
-	updatingUserData := updateIncludesField(mask, "spec.user_data")
-	updatingUserDataSecret := updateIncludesField(mask, "spec.user_data_secret")
+	updatingUserDataSource := updateIncludesField(mask, "spec.user_data_source")
 	updatingTemplateParams := updateIncludesField(mask, "spec.template_parameters")
 	updatingAutoExternalIP := updateIncludesField(mask, "spec.auto_external_ip_attachment")
 	updatingNetworkAttachments := updateIncludesField(mask, "spec.network_attachments")
@@ -870,7 +873,7 @@ func validateBareMetalImmutability(
 	}
 
 	if err := validateBareMetalUserDataImmutability(
-		existingSpec, newSpec, updatingUserData, updatingUserDataSecret,
+		existingSpec, newSpec, updatingUserDataSource,
 	); err != nil {
 		return err
 	}
@@ -901,20 +904,18 @@ func validateBareMetalImmutability(
 
 func validateBareMetalUserDataImmutability(
 	existingSpec, newSpec *privatev1.BareMetalInstanceSpec,
-	updatingUserData, updatingUserDataSecret bool,
+	updatingUserDataSource bool,
 ) error {
-	isAtomicMigration := updatingUserData && updatingUserDataSecret &&
-		existingSpec.HasUserData() && !newSpec.HasUserData() &&
-		existingSpec.GetUserDataSecret() == nil && newSpec.GetUserDataSecret() != nil
-	if updatingUserData && existingSpec.GetUserData() != newSpec.GetUserData() && !isAtomicMigration {
+	isAtomicMigration := updatingUserDataSource &&
+		existingSpec.GetUserDataSource().HasInline() && newSpec.GetUserDataSource().GetSecret() != nil
+	if updatingUserDataSource && existingSpec.GetUserDataSource().GetInline() != newSpec.GetUserDataSource().GetInline() && !isAtomicMigration {
 		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"cannot change spec.user_data: user_data is immutable after creation")
+			"cannot change spec.user_data_source.inline: user_data_source.inline is immutable after creation")
 	}
-	if updatingUserDataSecret && existingSpec.GetUserDataSecret() != nil &&
-		!proto.Equal(existingSpec.GetUserDataSecret(), newSpec.GetUserDataSecret()) &&
-		!isAtomicMigration {
+	if updatingUserDataSource && existingSpec.GetUserDataSource().GetSecret() != nil &&
+		!sameSecretReference(existingSpec.GetUserDataSource().GetSecret(), newSpec.GetUserDataSource().GetSecret()) {
 		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"cannot change spec.user_data_secret: user_data_secret is immutable after creation")
+			"cannot change spec.user_data_source.secret: user_data_source.secret is immutable after creation")
 	}
 	return nil
 }
