@@ -18,6 +18,7 @@ from .inputs import (
     UNIT,
     Behavior,
     Feature,
+    InputError,
     PackageCoverage,
     candidate_test_paths,
     contained_path,
@@ -195,6 +196,8 @@ def build_feature_report(
         try:
             with open(path, encoding="utf-8") as handle:
                 text = handle.read()
+        except UnicodeDecodeError as exc:
+            raise InputError("cannot decode test plan {0}: {1}".format(plan, exc)) from exc
         except OSError:
             continue
         parsed = parse_testplan(text, prefix=plan_key(plan) + "/" if multi else "")

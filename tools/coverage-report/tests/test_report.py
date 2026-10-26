@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from coverage_report.inputs import INTEGRATION, Feature, PackageCoverage  # noqa: E402
+from coverage_report.inputs import INTEGRATION, Feature, InputError, PackageCoverage  # noqa: E402
 from coverage_report.report import (  # noqa: E402
     _verdict,
     build_feature_report,
@@ -215,6 +215,13 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(report["metrics"]["integration"]["state"], "na")
         self.assertEqual(report["metrics"]["e2e"]["state"], "na")
         self.assertEqual(report["verdict"], "insufficient evidence")
+
+    def test_undecodable_test_plan_is_an_input_error(self):
+        with tempfile.TemporaryDirectory() as root:
+            with open(os.path.join(root, "plan.md"), "wb") as handle:
+                handle.write(b"#### TC-1: bad \xff\xfe\n")
+            with self.assertRaises(InputError):
+                build_feature_report(feature(testplans=("plan.md",)), root, "abc", measured())
 
     def test_missing_test_plan(self):
         with Repository("") as root:

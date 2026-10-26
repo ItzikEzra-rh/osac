@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -107,6 +108,29 @@ class CliTests(unittest.TestCase):
         self.run_cli(["dm"])
         with open(json_path, "rb") as handle:
             self.assertEqual(first, handle.read())
+
+    def test_failed_markdown_publish_restores_report_json(self):
+        self.run_cli(["dm"])
+        directory = os.path.join(self.out, "OSAC-1")
+        json_path = os.path.join(directory, "report.json")
+        with open(json_path, "rb") as handle:
+            before = handle.read()
+        real_replace = os.replace
+        calls = []
+
+        def failing_replace(source, target):
+            calls.append(target)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real_replace(source, target)
+
+        with mock.patch("coverage_report.cli.os.replace", side_effect=failing_replace):
+            code, _stdout, stderr = self.run_cli(["dm"])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot write report", stderr)
+        with open(json_path, "rb") as handle:
+            self.assertEqual(before, handle.read())
+        self.assertFalse(os.path.exists(os.path.join(directory, "report.md.tmp")))
 
     def test_all_features_writes_all_directory(self):
         code, _stdout, _stderr = self.run_cli([])

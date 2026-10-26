@@ -54,22 +54,55 @@ def _unknown_feature(query: str, choices: List[str]) -> int:
     return 2
 
 
-def _write_text(path: str, text: str) -> None:
-    temporary = path + ".tmp"
+def _previous_bytes(path: str) -> Optional[bytes]:
     try:
-        with open(temporary, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        os.replace(temporary, path)
-    except OSError as exc:
-        raise OSError("cannot write {0}; an existing file may be stale: {1}".format(path, exc)) from exc
+        with open(path, "rb") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _restore(path: str, previous: Optional[bytes]) -> None:
+    try:
+        if previous is None:
+            os.remove(path)
+        else:
+            with open(path, "wb") as handle:
+                handle.write(previous)
+    except OSError:
+        pass
 
 
 def _write_report(directory: str, report: dict) -> None:
+    """Publish ``report.json`` and ``report.md`` together, or neither."""
     os.makedirs(directory, exist_ok=True)
     json_path = os.path.join(directory, "report.json")
     markdown_path = os.path.join(directory, "report.md")
-    _write_text(json_path, json.dumps(report, indent=2, sort_keys=True) + "\n")
-    _write_text(markdown_path, render_markdown(report))
+    staged = [
+        (json_path, json.dumps(report, indent=2, sort_keys=True) + "\n"),
+        (markdown_path, render_markdown(report)),
+    ]
+    published = []
+    try:
+        for path, text in staged:
+            with open(path + ".tmp", "w", encoding="utf-8") as handle:
+                handle.write(text)
+        for path, _text in staged:
+            previous = _previous_bytes(path)
+            os.replace(path + ".tmp", path)
+            published.append((path, previous))
+    except OSError as exc:
+        for path, previous in reversed(published):
+            _restore(path, previous)
+        raise OSError("cannot write report to {0}: {1}".format(directory, exc)) from exc
+    finally:
+        for path, _text in staged:
+            temporary = path + ".tmp"
+            if os.path.exists(temporary):
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
     print(json_path)
     print(markdown_path)
 
