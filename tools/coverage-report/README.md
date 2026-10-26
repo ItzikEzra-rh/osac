@@ -87,7 +87,8 @@ anywhere.
 
 A behavior is a `#### TC-...: title` (or `###`) heading. Its priority and
 automation come from the `| ... | Priority | Automation |` table that follows
-it. Its tier comes from the `- **Tier / owner:**` bullet: labels starting with
+it. Its tier comes from the `- **Tier:**` bullet, or the legacy
+`- **Tier / owner:**` bullet whose owner part is ignored: labels starting with
 `Unit`, `E2E`, or `Component integration` / `Contract` / `UI integration`
 (including `Contract and component integration`) map to those tiers; anything
 else is tier-unassigned. `manual` and `not automatable` cases are excluded with

@@ -168,6 +168,13 @@ class TestplanTests(unittest.TestCase):
         behaviors = self.parse("#### TC-1.1: Env\n\n- **Tier / owner:** Envtest / [DEV].\n")
         self.assertEqual(behaviors[0].tier, INTEGRATION)
 
+    def test_tier_bullet_preferred_and_legacy_tier_owner_still_read(self):
+        behaviors = self.parse(
+            "#### TC-1.1: New form\n\n- **Tier:** E2E\n\n"
+            "#### TC-1.2: Legacy form\n\n- **Tier / owner:** Unit / [DEV]\n"
+        )
+        self.assertEqual([b.tier for b in behaviors], [E2E, UNIT])
+
     def test_dotted_case_ids_in_headings_and_matrix(self):
         table = "| A | Priority | Automation |\n|---|---|---|\n| x | high | automated |\n"
         behaviors = self.parse(

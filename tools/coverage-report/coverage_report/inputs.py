@@ -448,7 +448,9 @@ def parse_testplan(text: str, prefix: str = "") -> List[Behavior]:
                 title=title,
                 priority=" ".join(table.get("priority", "").split()).casefold(),
                 automation=automation,
-                tier=normalize_tier(bullets.get("tier / owner", "")),
+                tier=normalize_tier(
+                    bullets.get("tier") or bullets.get("tier / owner", "")
+                ),
                 execution=bullets.get("execution", ""),
                 id=prefix + tc_id,
                 excluded_reason=excluded,
