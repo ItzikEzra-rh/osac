@@ -89,7 +89,7 @@ def load_features(path: str) -> List[Feature]:
                 document = loader.get_single_data() or {}
             finally:
                 loader.dispose()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise InputError("cannot read {0}: {1}".format(path, exc)) from exc
     except yaml.YAMLError as exc:
         raise InputError("cannot parse {0}: {1}".format(path, exc)) from exc
@@ -230,7 +230,7 @@ def parse_coverprofiles(paths: Iterable[str]) -> Dict[str, PackageCoverage]:
                     previous = blocks.get(key)
                     if previous is None or count > previous[0]:
                         blocks[key] = (count, statements)
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise InputError("cannot read coverprofile {0}: {1}".format(path, exc)) from exc
         if not mode_seen:
             raise InputError("{0}: missing 'mode:' line".format(path))

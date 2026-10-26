@@ -80,6 +80,20 @@ class FeatureConfigTests(unittest.TestCase):
         for body in ("unit_packages: pkg/x", "unit_packages: 5", "aliases: alias"):
             self.rejects("features:\n  - key: OSAC-1\n    {0}\n".format(body))
 
+    def test_rejects_incomplete_inline_behaviors(self):
+        for behavior in ("id: B1", "title: Title"):
+            self.rejects(
+                "features:\n  - key: OSAC-1\n    behaviors:\n      - {0}\n".format(behavior)
+            )
+
+    def test_invalid_utf8_config_is_an_input_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "features.yaml")
+            with open(path, "wb") as handle:
+                handle.write(b"features:\n  - key: OSAC-1\n    name: \xff\xfe\n")
+            with self.assertRaises(InputError):
+                load_features(path)
+
 
 class TestplanPathTests(unittest.TestCase):
     def test_containment(self):
