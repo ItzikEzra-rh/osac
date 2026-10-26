@@ -480,7 +480,8 @@ def execution_matrix(text: str) -> Dict[str, str]:
                 continue
             path_text = row[path_index]
             for tc_id in _TC_ID_RE.findall(row[ids_index]):
-                rows[tc_id] = path_text
+                previous = rows.get(tc_id)
+                rows[tc_id] = path_text if previous is None else previous + "; " + path_text
     return rows
 
 

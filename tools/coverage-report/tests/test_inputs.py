@@ -239,6 +239,15 @@ class PathTests(unittest.TestCase):
         self.assertEqual(rows["TC-A-01"], "Rebuild `it/test.go`")
         self.assertEqual(rows["TC-A-02"], "Rebuild `it/test.go`")
 
+    def test_matrix_rows_for_the_same_case_are_merged(self):
+        rows = execution_matrix(
+            "| Component | Test case IDs | Existing or proposed path and command |\n"
+            "|---|---|---|\n"
+            "| api | TC-A-01 | `it/api_test.go` |\n"
+            "| worker | TC-A-01 | `it/worker_test.go` |\n"
+        )
+        self.assertEqual(rows["TC-A-01"], "`it/api_test.go`; `it/worker_test.go`")
+
 
 if __name__ == "__main__":
     unittest.main()
