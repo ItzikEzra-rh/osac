@@ -113,8 +113,9 @@ class CliTests(unittest.TestCase):
         self.run_cli(["dm"])
         directory = os.path.join(self.out, "OSAC-1")
         json_path = os.path.join(directory, "report.json")
-        with open(json_path, "rb") as handle:
-            before = handle.read()
+        previous = b'{"previous": true}\n'
+        with open(os.path.join(directory, "report.json"), "wb") as handle:
+            handle.write(previous)
         real_replace = os.replace
         calls = []
 
@@ -129,7 +130,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot write report", stderr)
         with open(json_path, "rb") as handle:
-            self.assertEqual(before, handle.read())
+            self.assertEqual(previous, handle.read())
         self.assertFalse(os.path.exists(os.path.join(directory, "report.md.tmp")))
 
     def test_all_features_writes_all_directory(self):

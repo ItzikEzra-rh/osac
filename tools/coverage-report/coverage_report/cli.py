@@ -55,10 +55,11 @@ def _unknown_feature(query: str, choices: List[str]) -> int:
 
 
 def _previous_bytes(path: str) -> Optional[bytes]:
+    """Return the bytes to restore, or ``None`` when the file is absent."""
     try:
         with open(path, "rb") as handle:
             return handle.read()
-    except OSError:
+    except FileNotFoundError:
         return None
 
 
