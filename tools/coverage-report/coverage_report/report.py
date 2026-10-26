@@ -197,8 +197,9 @@ def build_feature_report(
                 text = handle.read()
         except OSError:
             continue
-        testplan_found = True
         parsed = parse_testplan(text, prefix=plan_key(plan) + "/" if multi else "")
+        if parsed:
+            testplan_found = True
         matrix = execution_matrix(text)
         for behavior in parsed:
             matrices[behavior.id] = matrix.get(behavior.tc_id, "")

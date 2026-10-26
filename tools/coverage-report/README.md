@@ -25,7 +25,8 @@ The tool is also directly runnable:
 ```sh
 tools/coverage-report/coverage-report [FEATURE] \
   [--features PATH]... [--group WG] \
-  [--coverprofile PATH]... [--out DIR] [--repo PATH]
+  [--coverprofile PATH]... [--allow-external-root PATH]... \
+  [--out DIR] [--repo PATH]
 ```
 
 `FEATURE` is a Jira key, name, or alias from the area config, case-insensitive.
@@ -78,6 +79,10 @@ labels a working group in the report header. When a feature has several
 | declared | a non-"proposed" path in the test plan (Execution bullet or Planning Evidence Matrix) that exists, or a reviewed `mappings:` entry | yes |
 | inferred | a `mappings:` entry without a valid `mappings_reviewed_by` | listed, never counted |
 | gap | no existing test, a proposed/missing path, no path, or no tier | drives the next action |
+
+A symlinked `enhancement-proposals` checkout and `--allow-external-root` paths
+can supply test-plan files outside the repository. This exception applies to
+test-plan files only; coverprofiles and area configs must stay inside it.
 
 A behavior is a `#### TC-...: title` (or `###`) heading. Its priority and
 automation come from the `| ... | Priority | Automation |` table that follows

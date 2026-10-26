@@ -209,6 +209,13 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(report["verdict_reason"],
                          "E2E at 0.0% (0/1): no reviewed test links yet; Integration: no test plan")
 
+    def test_plan_without_cases_is_na_not_ready(self):
+        with Repository("# Plan\n\nNo test cases here.\n") as root:
+            report = build_feature_report(feature(testplans=("plan.md",)), root, "abc", measured())
+        self.assertEqual(report["metrics"]["integration"]["state"], "na")
+        self.assertEqual(report["metrics"]["e2e"]["state"], "na")
+        self.assertEqual(report["verdict"], "insufficient evidence")
+
     def test_missing_test_plan(self):
         with Repository("") as root:
             report = build_feature_report(feature(testplans=("absent.md",)), root, "abc", measured())

@@ -36,7 +36,7 @@ rm: ## Remove the distrobox and its container
 rebuild: rm image enter ## Rebuild image from scratch and enter
 
 coverage-report: ## Generate a coverage report (FEATURE=KEY FEATURES=PATH ARGS="--coverprofile PATH")
-	python3 tools/coverage-report/coverage-report $(FEATURE) $(if $(FEATURES),--features $(FEATURES)) $(ARGS)
+	python3 tools/coverage-report/coverage-report $(if $(FEATURE),"$(FEATURE)") $(if $(FEATURES),--features "$(FEATURES)") $(ARGS)
 
 status: ## Show distrobox and image status
 	@echo "=== Images ==="
