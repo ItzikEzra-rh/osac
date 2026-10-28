@@ -135,6 +135,32 @@ Report behavioral coverage, execution readiness, and test execution results
 separately. A case with a proposed harness or unresolved command is planned but
 not execution-ready; static checks passing does not change that status.
 
+## Implementation evidence
+
+Every change must classify its touched behaviors against the tier boundaries
+above and, when the affected component has one, its touched-area map. Changes
+that do not alter runtime behavior need no integration coverage; record that
+classification explicitly. Classify behavior-changing generated config against
+the touched-area map.
+
+Before opening a pull request:
+
+- Every required integration row must have an executed, passing test through
+  the named boundary. Unit tests and mocks do not satisfy a real component
+  boundary; a documented provider gap does not make a lower-tier test
+  coverage of that boundary.
+- Cite the executed command and working directory per row. Lint, typecheck,
+  collection, and schema-generation checks are build validation, not
+  integration evidence.
+- Missing or wrong-tier coverage is reported as a gap, never as covered. Link
+  it to the owning follow-up ticket using its Jira URL when one exists. If no
+  owner or ticket exists, report the gap as unresolved; do not invent a ticket.
+- The PR description or review report must state, per touched boundary: the
+  exercised boundary, running dependencies, executed command, and result — or
+  report the gap as unresolved with its owning ticket URL when one exists. If
+  there is no owner or ticket, state that explicitly; never claim the boundary
+  is covered.
+
 ## Agentic CI sandbox
 
 The repository overlay provides early Autofix feedback. It does not replace
@@ -238,9 +264,12 @@ installer command in the tier table remains the component-integration check.
 
 ### Coverage notes
 
+- **StorageBackend ownership ([DEV] [OSAC-6868](https://redhat.atlassian.net/browse/OSAC-6868)):** `internal/validation/storage_backend_ownership_test.go` covers explicit and omitted ownership through the real validation interceptor. `internal/servers/private_storage_backends_server_test.go` combines that interceptor with the real private server and PostgreSQL, then reads in a separate transaction to verify rejection leaves no backend and supported configurations persist. Run `go test ./internal/validation -count=1` and `go test ./internal/servers -count=1 -timeout=10m -ginkgo.focus='Storage backend ownership|Private storage backends server'` from `fulfillment-service/`. Tenancy and attribution are suite doubles; these tests do not exercise a deployed service. `it/it_storage_backend_ownership_test.go` covers the deployed private API/CLI and database boundary through the Fulfillment installer target above. No operator, AAP, or storage-array provisioning is exercised.
+
 - **Tenant storage onboarding projection ([OSAC-6575](https://redhat.atlassian.net/browse/OSAC-6575), DEV):** `internal/controllers/tenant/tenant_storage_onboarding_test.go` covers exact operator condition projection, missing/unknown evidence, source isolation, timestamps, and unchanged observations through the reconciler with mocked hub and Kubernetes clients. `it/it_tenant_storage_onboarding_test.go` exercises operator Tenant CR status to explicit private Tenant `Signal` to persisted private API status using real Kubernetes, the deployed Fulfillment controller/API, and PostgreSQL. [OSAC-6684](https://redhat.atlassian.net/browse/OSAC-6684) adds repeated reads and signals with unchanged storage evidence; a changed compute-readiness reason in the same response confirms the later hub observation occurred. Run the Fulfillment installer target above, or `ginkgo run --timeout 20m --focus 'Tenant storage onboarding feedback' it` against a compatible deployed environment. The fixture supplies the operator condition; it does not prove automatic feedback-watch delivery, storage readiness calculation ([OSAC-6447](https://redhat.atlassian.net/browse/OSAC-6447)), AAP execution, remote cluster access, real storage-provider behavior, or VM consumption ([OSAC-6596](https://redhat.atlassian.net/browse/OSAC-6596)).
 - **BareMetalInstanceType architecture:** Unit validation is in `internal/validation/baremetal_hardware_spec_contract_test.go`. PostgreSQL component-integration tests cover Create validation/persistence in `internal/servers/baremetal_instance_type_architecture_test.go` and canonicalization, preservation, idempotence and rollback in `internal/database/migrations/125_canonicalize_bare_metal_type_architectures_test.go`. Create tests use in-process handlers with mocked tenancy/attribution.
 - **CLI commands that only call Fulfillment APIs:** Cover them in `fulfillment-service/it/`.
+- **RoleBinding authorization ([OSAC-6146](https://redhat.atlassian.net/browse/OSAC-6146), DEV):** `it_role_binding_reconciler_test.go` checks Keycloak role grant/removal and reader-role behavior; `it_role_binding_authorization_test.go` checks tenant-admin-only denial, `admins` access after fresh login, and denial after both grants are removed. Run the full focused coverage from `fulfillment-service/` with `ginkgo run --timeout 20m --focus 'Role binding reconciler|grants system-wide tenant listing while a tenant admin is in admins' it`. The reconciler group includes reader-role cases that create cluster, catalog, and network fixtures. These use deployed Fulfillment and Keycloak. Existing-token revocation is tracked in [OSAC-6375](https://redhat.atlassian.net/browse/OSAC-6375).
 - **Cluster reserved-tenant placement ([DEV]):** `internal/servers/private_clusters_server_test.go` and `clusters_server_test.go` cover explicit shared placement, administrator default-to-shared, no persistence/request mutation, shared catalog selection by a real tenant, forbidden tenant moves, and DAO-seeded legacy shared Cluster read/status/delete. Run `ginkgo run --timeout 10m internal/servers` from `fulfillment-service/`; PostgreSQL is real, while attribution and surrounding suite tenancy are doubles (the reserved-placement cases use real administrator tenancy logic). `it/it_public_clusters_test.go` adds authenticated public administrator rejection and an admin List proving no persisted result; ordinary user creation remains tenant-owned. Run the Fulfillment installer target above for this deployed API/database/identity boundary. Neither suite proves worker/provider teardown: the existing tenant-owned CaaS journey below belongs to [QE]; see the [operator coverage notes](#osac-operator) for deployed worker coverage gaps. Existing shared Clusters are not migrated automatically; retain supported read/status/delete for cleanup, then recreate in a real tenant rather than moving live objects across tenants.
 - **Reserved metadata on the public API ([OSAC-6394](https://redhat.atlassian.net/browse/OSAC-6394), [OSAC-6395](https://redhat.atlassian.net/browse/OSAC-6395), [OSAC-6396](https://redhat.atlassian.net/browse/OSAC-6396)):** `internal/servers/generic_mapper_test.go` covers case-sensitive matching of `admin.osac.openshift.io` and dot-delimited subdomains, recursive public projection, and rejection of explicit reserved input. `internal/servers/generic_server_test.go` covers empty-map clearing, private update behavior, stale `lock=true` rejection, and a deterministic PostgreSQL row-lock case: a private transaction updates reserved labels and annotations, a public update waits on that row, and PostgreSQL confirms the blocked update before the writer commits. The public update then retains the latest reserved entries while applying the ordinary map replacement. Run the focused unit cases from `fulfillment-service/` with `ginkgo run --no-color --focus 'Generic mapper|preserves reserved metadata from the locked object on public updates|rejects a stale version when public update locking is requested|preserves the latest reserved metadata after waiting for a concurrent update|preserves reserved metadata while merging nonempty unmasked labels' internal/servers`. The suite uses an ephemeral real PostgreSQL container; it does not exercise a deployed Fulfillment service or gateway.
   `fulfillment-service/it/it_labels_test.go` and `it_annotations_test.go` cover public Create/Update rejection, public whole-map replacement, omission preservation, and filtered public responses alongside private administrator reads of stored metadata. Run them through `make -C ../osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=fulfillment`. These cases use the deployed Fulfillment gRPC APIs, PostgreSQL, and the test identities; they do not exercise REST/Connect clients or cluster provisioning. Related test-plan cases: TC-IS3-01, TC-IS3-02, TC-IS4-01, TC-IS4-03, TC-IS5-01, and TC-IS5-02.
@@ -256,8 +285,10 @@ installer command in the tier table remains the component-integration check.
 - **MCP server:** `fulfillment-service/it/it_mcp_server_test.go` uses a real MCP
   SDK client and an in-process MCP handler; its exchanger forwards a caller API
   token to deployed Fulfillment and PostgreSQL. It covers five-tool discovery,
-  connection summaries, tenant visibility, creator attribution, and rejected
-  writes without persisted mutations. `it_mcp_discovery_test.go` creates
+  connection summaries, tenant visibility, creator attribution, asynchronous
+  create acceptance with the resource ID and version, rejected arbitrary
+  service/method/payload arguments, and rejected writes without persisted
+  mutations. `it_mcp_discovery_test.go` creates
   Projects and Secret references for two tenants, verifies caller-scoped
   Project and Secret-reference listing, confirms Secret-reference results
   contain only reference metadata, and checks list-only Secret Get rejection
@@ -270,8 +301,9 @@ installer command in the tier table remains the component-integration check.
   settings and replica counts. `internal/auth/auth_jwt_validator_test.go`
   covers expired and untrusted-issuer tokens; MCP ingress tests cover wrong
   resource audiences. `mcpserver` unit tests cover 4xx/429/5xx and transport
-  exchange failures, caller/permission mismatch, safe errors, and connection
-  checks. Helm lint and rendering cover opt-in templates and schema; ordinary
+  exchange failures, typed registration, caller/permission mismatch, safe
+  errors, and connection checks. Helm lint and rendering cover opt-in templates
+  and schema; ordinary
   profile renders exercise the disabled default. Provider provisioning, VM
   readiness, and external MCP-host interoperability remain outside these tests.
 - **ComputeInstance deletion feedback with stale references ([OSAC-6513](https://redhat.atlassian.net/browse/OSAC-6513), DEV):** `internal/references/reference_validator_test.go` covers status-only, spec, mixed, and empty masks at Unit tier. `it/it_compute_instance_update_test.go` holds a deleting ComputeInstance, removes its referenced user-data Secret, then checks that status feedback persists through the deployed private Fulfillment API and PostgreSQL while spec, mixed, and empty-mask updates still reject the missing reference. Run it with the Fulfillment installer target above; against an already deployed compatible Kind environment, run `ginkgo run --timeout 20m --focus 'persists deletion feedback after a referenced Secret disappears' it` from `fulfillment-service/`. The suite omits the operator, AAP, and VM provider, so it does not prove dependent network teardown.
@@ -620,6 +652,8 @@ applicable integration tests separately to validate workflow behavior.
 - **Filters, variable transforms, and isolated plugin logic:** Include invalid input and default handling.
 - **AgentlessNet VirtualNetwork/Subnet state and command helpers:** Unit coverage proves the current v1 schema initialization, fail-closed rejection of incompatible v1/v2 databases, internal allocation and exhaustion, exclusion parsing for bridge memberships and NVUE reserved ranges, parent-lock serialization, retry retention, VLAN interfaces, derived DHCP-manager selection, DHCP rendering/service lifecycle, lease preservation, and diagnostics with mocked provider commands. OSAC-6306 pool unit cases prove immutable identity and idempotent identity-checked deletion. OSAC-6308 attachment unit cases prove the schema-v1 attachment row, identity/retry/target-replacement behavior, dependency deletion guards, and owner-scoped DNAT, forwarding, route, and conntrack cleanup commands. The existing ExternalIPPool operator controller test verifies pool deprovision waits until child ExternalIP CRs are removed. The operator envtest verifies Subnet parent-context construction; the Kind pool target verifies the ExternalIPPool CR's Kubernetes UID, Fulfillment label, tenant, family, and CIDR reach saved state through the existing playbooks. AAP/Kind service-readiness checks do not prove client leases or traffic delivery.
 - **Ansible roles, workflow tasks, hooks, leases, finalizers, or Kubernetes resources:** The test must exercise the role/playbook through Ansible against Kind.
+- **Netris tenant networking idempotency (OSAC-4923, [DEV]):** Unit tests cover the idempotency filters and response normalization. The `tests/integration/targets/netris_idempotency/tasks/baseline.yml` component target runs the real top-level Netris playbooks against Kind and a stateful local Netris HTTP fixture. It covers create/rerun, immutable drift and unverifiable fields, partial-operation recovery, ownership-checked deletion, ExternalIP pool membership, default-resource guards, attachment move retries, and sanitized AAP failure output.
+  The fixture proves caller-side playbook behavior; it does not confirm response contracts against a live Netris controller. See `osac-aap/docs/netris-idempotency-inventory.md` for the operation matrix. SecurityGroup stale ACL pruning remains OSAC-4888; broader live-provider coverage remains under OSAC-4843.
 - **Netris Subnet deletion:** The `netris_subnet_delete` target runs the real top-level delete playbook in a child Ansible process and proves dynamic strategy dispatch, the V-Net to IPAM to ConfigMap order, absence-tolerant V-Net and IPAM subnet deletion, and failure on non-404 provider errors against a fake Netris HTTP fixture and real Kind ConfigMaps. The fixture records method/path order only; it does not prove real Netris 404 semantics or a deployed AAP/provider contract ([OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843)).
 - **MetalLB ExternalIP detach annotation cleanup:** The `metallb_l2_detach_annotation` target starts two independent Ansible processes after both have read the same annotation snapshot. It verifies that concurrent detach cleanup succeeds when one process removes the annotation before the other patches it, against a real Kind API. It does not exercise a deployed AAP controller or MetalLB provider.
 - **Netris parent-network deletion:** The `netris_parent_delete` target runs the real VirtualNetwork and ExternalIPPool delete playbooks against a local HTTP fixture. It proves that a VPC or IPAM allocation removed between lookup and DELETE does not delay ordered cleanup, while 400 dependency and 500 provider errors still fail. It also verifies that absent resources cause no DELETE request. This is caller-side response handling, not a real Netris or deployed AAP/provider contract ([OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843)).
@@ -727,6 +761,7 @@ Touched-area requirements: [component guide](../tests/e2e/AGENTS.md#touched-area
 
 | Tier | Location / command | Exercises for real | Faked or omitted |
 |---|---|---|---|
+| Unit ([DEV], VMaaS deletion-test finalizer retries) | From the repository root: `uv run pytest -n 0 tests/unit/test_vmaas_deletion_finalizer.py` | Test-helper retry policy: reread versions and finalizers after Aborted, preserve concurrent finalizers, stop after bounded attempts, skip no-op updates, and propagate other errors | gRPC responses and time are mocked; no production behavior changes or deployed deletion coverage. |
 | E2E (VMaaS deletion feedback, [QE] [OSAC-6513](https://redhat.atlassian.net/browse/OSAC-6513)) | From the repository root: `uv run pytest -n 0 tests/e2e/vmaas/regression/test_compute_instance_disk_image.py -k deletion_feedback_with_removed_disk_image` | Deployed Fulfillment/database accept private DELETING feedback carrying the removed DiskImage reference; the operator, AAP, and VM provider remove the ComputeInstance, permitting explicit SecurityGroup, Subnet, and VirtualNetwork deletion | Requires a configured VMaaS template, instance type, storage tier, and networking provider; no deletion completion is mocked. |
 | E2E ([DEV] OSAC-5530 lab journey) | From the repository root: `AAP_PROJECT_GIT_BRANCH=OSAC-5530-subnet-vlan-dhcp AAP_PROJECT_EXPECTED_REVISION=<runtime-sha> bash ./vlan-e2e.sh` | Deployed Fulfillment/database/operator/AAP/SSH/Linux/dnsmasq/Cumulus VX; real DHCP leases from BusyBox clients, gateway pings, same-Subnet L2 across leaves, DHCP restart/renewal, Subnet retry, `/30` single-address allocation, deletion, and cleanup | Uses client containers and virtual switches; it does not establish physical-hardware, BMaaS lease-status, NAT, or full-install CI coverage. A successful run is required to claim deployed behavior. |
 | E2E (VMaaS regression) | From the repository root: `uv run pytest tests/e2e/vmaas/regression/test_compute_instance_instance_type.py` | InstanceType resize through CLI/API, CatalogItem provisioning, and Kubernetes/KubeVirt resources | Requires a configured single-node VMaaS environment; no services are mocked. |
@@ -766,10 +801,11 @@ is not set. These checks and pytest collection prove selection only, not
 ### Focused CaaS natural-teardown boundary
 
 CaaS sanity retains the single-nodepool lifecycle and fast deletion feedback
-scenario. Two-node-set isolation runs in
-`caas/regression/test_cluster_node_sets.py`; explicit version resolution and
-invalid-version rejection are consolidated in
-`caas/regression/test_cluster_version.py`.
+scenario and verifies deployed version resolution through the ClusterOrder and
+HostedCluster release image. Two-node-set isolation runs in
+`caas/regression/test_cluster_node_sets.py`. Invalid-version API validation and
+ClusterVersion deletion protection belong to the Fulfillment integration suite
+in `fulfillment-service/it/it_public_clusters_test.go`.
 
 Both `test_cluster_create` and `test_cluster_create_with_two_node_sets` use the
 same natural teardown assertions. `test_cluster_create` creates its cluster from a
