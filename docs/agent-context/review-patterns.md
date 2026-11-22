@@ -36,8 +36,10 @@ it belongs in the PRD. If no, it belongs in the design.
   lets a user declare a property is not prior art for changing it.
 
 ### Design EP Expectations
-- All template sections must be present, even if marked "TBD" or "N/A"
-- Implementation details should cover the affected contracts and lifecycle; scale depth to the change
+- Keep required headers. A section that does not apply gets one line: "N/A" and the reason
+- Implementation details cover the decisions reviewers must agree on: schemas, APIs and the guarantees the design depends on. Scale depth to risk
+- Correctness rules (atomic writes, duplicate prevention, crash and restore behavior) are stated explicitly, even when internal to one component
+- Plain language: concrete actors and verbs, one condition per bullet, branching rules as lists or tables, no repetition across sections
 - Test plans should describe strategy, not just "tests will be added"
 
 ### Clarity
@@ -81,7 +83,7 @@ current implementation or networking support. Verify the latest accepted design
 and source code before adopting an example. In particular, historical IPv6 and
 dual-stack examples do not override [networking decisions](networking-decisions.md).
 
-Existing EPs as quality benchmarks:
+Existing EPs as structure examples. Length is not a quality signal. Shorter is better when the decisions are covered:
 
 | Slug | Description | Lines | Notable Patterns |
 |------|-------------|-------|------------------|
@@ -93,7 +95,7 @@ Existing EPs as quality benchmarks:
 | `computeinstance-phase-condition-expansion` | ComputeInstance status and lifecycle updates | ~200 | API evolution pattern for existing resources |
 
 Key takeaways:
-- All EPs follow the template structure exactly (no skipped sections)
+- EPs keep the template headers. Sections that do not apply are one line
 - Successful EPs define terminology upfront and use it consistently
 
 ## Review Process
