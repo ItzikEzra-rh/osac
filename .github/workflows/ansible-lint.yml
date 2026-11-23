@@ -35,9 +35,8 @@ jobs:
         run: uv sync --locked --all-extras --group development
       - name: Run ansible-lint
         working-directory: osac-aap
-        # Explicit "." is required: without a target path, ansible-lint
-        # discovers files via `git ls-files` against the whole repo (not
-        # CWD-scoped), which in this monorepo pulls in unrelated
-        # fulfillment-service/osac-operator YAML and produces spurious
-        # failures.
-        run: uv run ansible-lint .
+        # Pass an absolute path, not ".": ansible-lint's directory
+        # expansion matches discovered relative filenames against the
+        # target string, so "." only matches dot-prefixed entries and
+        # silently lints nothing under osac-aap/.
+        run: uv run ansible-lint "$PWD"

@@ -84,6 +84,7 @@
         kubectl config set-context limited --cluster=kind --user=limited \
           --namespace=osac-system --kubeconfig="$KC"
         kubectl config use-context limited --kubeconfig="$KC"
+      changed_when: false
 
     - name: Verify get works with limited kubeconfig
       ansible.builtin.shell: |
@@ -209,16 +210,19 @@
       ansible.builtin.shell: |
         kubectl delete rolebinding osac-teardown-limited -n osac-system --ignore-not-found
       failed_when: false
+      changed_when: false
 
     - name: Delete Role
       ansible.builtin.shell: |
         kubectl delete role osac-teardown-limited -n osac-system --ignore-not-found
       failed_when: false
+      changed_when: false
 
     - name: Delete ServiceAccount
       ansible.builtin.shell: |
         kubectl delete sa osac-teardown-limited -n osac-system --ignore-not-found
       failed_when: false
+      changed_when: false
 
     - name: Remove limited kubeconfig
       ansible.builtin.file:
